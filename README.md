@@ -1,4 +1,9 @@
+# NOTE: WORK IN PROGRESS, VULKAN CONVERSION IS WIP
+
 # Llama.cpp Model Controller 🦙
+
+This is a fork of ![Dan-Duran's Llama.cpp Model Controller](https://github.com/Dan-Duran/llama-cpp-model-controller), that supports cuda. I will convert it to use vulkan (for multi/mixed-new/old gpu support)
+
 
 The Llama.cpp Model Controller is an intuitive web interface for managing local LLM deployments powered by llama.cpp. This application streamlines the process of starting, monitoring, and stopping language models through a clean, responsive UI, eliminating the need for complex command-line operations.
 
