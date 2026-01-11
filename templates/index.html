@@ -39,19 +39,19 @@
             <!-- Model Parameters Column -->
             <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
                 <h2 class="text-xl font-bold mb-4">Model Parameters</h2>
-                
+
                 <div class="grid grid-cols-2 gap-2">
-                    <div>
-                        <label class="block text-left mb-1">Threads</label>
-                        <input type="number" id="threads" name="threads" form="modelForm" value="16" class="w-full bg-gray-700 text-white p-2 rounded mb-3">
-                    </div>
                     <div>
                         <label class="block text-left mb-1">GPU Layers</label>
                         <input type="number" id="ngl" name="ngl" form="modelForm" value="99" class="w-full bg-gray-700 text-white p-2 rounded mb-3">
                     </div>
                     <div>
+                        <label class="block text-left mb-1">Context Size</label>
+                        <input type="number" id="ctx_size" name="ctx_size" form="modelForm" value="16384" class="w-full bg-gray-700 text-white p-2 rounded mb-3">
+                    </div>
+                    <div>
                         <label class="block text-left mb-1">Port</label>
-                        <input type="number" id="port" name="port" form="modelForm" value="8080" class="w-full bg-gray-700 text-white p-2 rounded mb-3">
+                        <input type="number" id="port" name="port" form="modelForm" value="4000" class="w-full bg-gray-700 text-white p-2 rounded mb-3">
                     </div>
                     <div>
                         <label class="block text-left mb-1">Host</label>
@@ -63,32 +63,57 @@
             <!-- Advanced Settings Column -->
             <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
                 <h2 class="text-xl font-bold mb-4">Advanced Settings</h2>
-                
+
                 <div>
-                    <label class="block text-left mb-1">Context Size</label>
-                    <input type="number" id="c" name="c" form="modelForm" value="32000" class="w-full bg-gray-700 text-white p-2 rounded mb-3">
-                </div>
-                
-                <div>
-                    <label class="block text-left mb-1">Split Mode (-sm)</label>
-                    <select id="sm" name="sm" form="modelForm" class="w-full bg-gray-700 text-white p-2 rounded mb-3">
-                        <option value="layer">layer (default)</option>
-                        <option value="none">none (single GPU)</option>
-                        <option value="row">row</option>
+                    <label class="block text-left mb-1">Main GPU</label>
+                    <select id="main_gpu" name="main_gpu" form="modelForm" class="w-full bg-gray-700 text-white p-2 rounded mb-3">
+                        <option value="0">GPU 0 (RX 480)</option>
+                        <option value="1">GPU 1 (RX 6600)</option>
                     </select>
                 </div>
-                
+
                 <div>
-                    <label class="block text-left mb-1">Number of Parallel Sequences</label>
-                    <input type="number" id="np" name="np" form="modelForm" value="1" class="w-full bg-gray-700 text-white p-2 rounded mb-3">
+                    <label class="block text-left mb-1">Tensor Split (GPU0,GPU1)</label>
+                    <input type="text" id="tensor_split" name="tensor_split" form="modelForm" value="1,0.4" placeholder="1,0.4" class="w-full bg-gray-700 text-white p-2 rounded mb-3">
+                </div>
+
+                <div>
+                    <label class="block text-left mb-1">Batch Size</label>
+                    <input type="number" id="batch_size" name="batch_size" form="modelForm" value="512" class="w-full bg-gray-700 text-white p-2 rounded mb-3">
+                </div>
+
+                <div>
+                    <label class="block text-left mb-1">UBatch Size</label>
+                    <input type="number" id="ubatch_size" name="ubatch_size" form="modelForm" value="128" class="w-full bg-gray-700 text-white p-2 rounded mb-3">
+                </div>
+
+                <div>
+                    <label class="block text-left mb-1">Flash Attention</label>
+                    <select id="flash_attn" name="flash_attn" form="modelForm" class="w-full bg-gray-700 text-white p-2 rounded mb-3">
+                        <option value="on">On</option>
+                        <option value="off">Off</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-left mb-1">Parallel Sequences</label>
+                    <input type="number" id="parallel" name="parallel" form="modelForm" value="1" class="w-full bg-gray-700 text-white p-2 rounded mb-3">
+                </div>
+
+                <div>
+                    <label class="block text-left mb-1">Continuous Batching</label>
+                    <select id="cont_batching" name="cont_batching" form="modelForm" class="w-full bg-gray-700 text-white p-2 rounded mb-3">
+                        <option value="true">Enabled</option>
+                        <option value="false">Disabled</option>
+                    </select>
                 </div>
             </div>
         </div>
 
         <!-- GPU Stats Section -->
         <div class="bg-gray-800 p-6 rounded-lg shadow-lg mt-4">
-            <h2 class="text-xl font-bold mb-2">GPU Usage</h2>
-            <div id="gpu-stats" class="text-sm grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            <h2 class="text-xl font-bold mb-2">GPU Usage (AMD Radeon)</h2>
+            <div id="gpu-stats" class="text-sm grid grid-cols-1 sm:grid-cols-2 gap-4">
                 Loading...
             </div>
         </div>
@@ -143,9 +168,10 @@
             gpus.forEach(gpu => {
                 gpuContainer.innerHTML += `
                     <div class="p-3 bg-gray-700 rounded">
-                        <p><strong>${gpu.name} (GPU ${gpu.index})</strong></p>
+                        <p><strong>${gpu.name} (${gpu.index})</strong></p>
                         <p>Temp: ${gpu.temp} | Usage: ${gpu.usage}</p>
-                        <p>Memory: ${gpu.memory}</p>
+                        <p>Power: ${gpu.power}</p>
+                        ${gpu.memory ? `<p>Memory: ${gpu.memory}</p>` : ''}
                     </div>
                 `;
             });

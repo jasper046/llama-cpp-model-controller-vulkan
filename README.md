@@ -1,21 +1,50 @@
-# NOTE: WORK IN PROGRESS, VULKAN CONVERSION IS ONGOING
+# Llama.cpp Model Controller (Vulkan Edition) 🦙
 
-# Llama.cpp Model Controller 🦙
+## 🎯 Status Report
 
-This is a fork of [Dan-Duran's Llama.cpp Model Controller](https://github.com/Dan-Duran/llama-cpp-model-controller), that supports cuda. I will convert it to use vulkan (for multi/mixed-new/old gpu support)
+**Vulkan Conversion: COMPLETE** ✅
 
+This is a Vulkan-enabled fork of [Dan-Duran's Llama.cpp Model Controller](https://github.com/Dan-Duran/llama-cpp-model-controller). The original CUDA-only implementation has been successfully converted to support AMD GPUs via Vulkan backend, enabling multi-GPU and mixed GPU configurations.
+
+**What Changed:**
+- ✅ **Backend**: CUDA → Vulkan command generation
+- ✅ **GPU Monitoring**: nvidia-smi → AMD sysfs (temperature, power, usage)
+- ✅ **Configuration**: Centralized config file for easy customization
+- ✅ **Parameters**: Full Vulkan parameter support (tensor-split, flash attention, continuous batching, etc.)
+- ✅ **UI**: Updated form controls for Vulkan-specific settings
+
+**Current Status:** Code conversion complete, ready for testing on target hardware with RX 480 + RX 6600.
+
+---
 
 The Llama.cpp Model Controller is an intuitive web interface for managing local LLM deployments powered by llama.cpp. This application streamlines the process of starting, monitoring, and stopping language models through a clean, responsive UI, eliminating the need for complex command-line operations.
 
-Key features include real-time GPU monitoring with temperature and memory usage statistics, color-coded live server logs showing token usage and model output, and customizable deployment parameters. Users can easily configure thread count, context size, and GPU allocation strategies for optimal performance on their hardware.
+Key features include real-time GPU monitoring with temperature, power, and usage statistics for AMD GPUs, color-coded live server logs showing token usage and model output, and customizable Vulkan deployment parameters. Users can easily configure context size, GPU layers, tensor-split ratios, and advanced options like flash attention and continuous batching for optimal performance on their hardware.
 
 ## 📋 Requirements
 
-- Linux environment with CUDA support
-- NVIDIA GPU(s) with appropriate drivers
-- Python 3.8+ 
-- llama.cpp compiled with CUDA support
+- Linux environment with Vulkan support
+- AMD/NVIDIA/Intel GPU(s) with Vulkan drivers
+- Python 3.8+
+- llama.cpp compiled with Vulkan support
 - GGUF format models
+
+### Verifying Vulkan Support
+
+Before using this controller, verify your Vulkan installation:
+
+```bash
+# Check Vulkan devices
+vulkaninfo | grep deviceName
+
+# List available compute devices in llama.cpp
+~//usr/local/bin/llama-cli --list-devices
+
+# Expected output for dual AMD setup:
+# ggml_vulkan: Found 2 Vulkan devices:
+# ggml_vulkan: 0 = AMD Radeon RX 480 ...
+# ggml_vulkan: 1 = AMD Radeon RX 6600 ...
+```
 
 ## 🚀 Installation
 
@@ -50,23 +79,29 @@ mkdir -p models
 
 ### 5. Configure the application
 
-Edit `app.py` to customize the path variables at the top of the file:
+Edit `config.py` to customize the paths and GPU configuration:
 
 ```python
-# Configuration variables - update these to match your environment
-HOME_DIR = os.path.expanduser("~")  # Dynamically get user's home directory
-PROJECT_DIR = os.path.join(HOME_DIR, "llama")  # Project directory
-MODEL_DIR = os.path.join(PROJECT_DIR, "models")  # Model directory
-LLAMA_CPP_PATH = os.path.join(PROJECT_DIR, "llama.cpp-b4823/build/bin/llama-server")  # Path to llama-server executable
-CACHE_DIR = os.path.join(HOME_DIR, ".cache/llama")  # Llama cache directory
+import os
+
+HOME_DIR = os.path.expanduser("~")
+LLAMA_CPP_PATH = os.path.join(HOME_DIR, "/usr/local/bin/llama-server")
+MODEL_DIR = os.path.join(HOME_DIR, "models")
+CACHE_DIR = os.path.join(HOME_DIR, ".cache/llama")
+SLOTS_DIR = "/tmp/llama_slots"
+
+GPU_CARDS = [
+    ("card1", "RX 480"),
+    ("card2", "RX 6600")
+]
 ```
 
-You can modify these paths to match your specific environment:
-- `HOME_DIR`: Your home directory (automatically detected)
-- `PROJECT_DIR`: The directory where the application is installed
+You can modify these values to match your specific environment:
+- `LLAMA_CPP_PATH`: Path to your Vulkan-compiled llama-server executable
 - `MODEL_DIR`: Where your GGUF models are stored
-- `LLAMA_CPP_PATH`: Path to the llama-server executable
 - `CACHE_DIR`: Where llama.cpp stores its cache files
+- `SLOTS_DIR`: Directory for saving conversation slots
+- `GPU_CARDS`: List of GPU cards for monitoring (check `/sys/class/drm/` for card IDs)
 
 
 ## 🖥️ Usage
@@ -83,18 +118,32 @@ The web interface will be available at `http://localhost:5000` by default.
 
 1. Select a model from the dropdown menu
 2. Configure the parameters (or use the defaults)
-   - **Threads**: Number of CPU threads to use (recommended: 16)
+
+   **Model Parameters:**
    - **GPU Layers**: Number of layers to offload to GPU (default: 99)
-   - **Context Size**: Token context window size (default: 32000)
-   - **Split Mode**: How to divide the model across GPUs (layer or row)
-   - **Parallel Sequences**: Number of sequences to process in parallel
+   - **Context Size**: Token context window size (default: 16384)
+   - **Port**: Server port (default: 4000)
+   - **Host**: Server host (default: 0.0.0.0)
+
+   **Advanced Settings:**
+   - **Main GPU**: Primary GPU for computation (0: RX 480, 1: RX 6600)
+   - **Tensor Split**: Ratio for distributing model across GPUs (default: 1,0.4)
+   - **Batch Size**: Processing batch size (default: 512)
+   - **UBatch Size**: Micro-batch size (default: 128)
+   - **Flash Attention**: Enable/disable flash attention optimization
+   - **Parallel Sequences**: Number of parallel sequences (default: 1)
+   - **Continuous Batching**: Enable continuous batching for better throughput
+
 3. Click "Start Model"
-4. The model will be available at the configured host:port
+4. The model will be available at the configured host:port (default: http://0.0.0.0:4000)
 
 ### Monitoring
 
-- The GPU stats section shows current GPU utilization
-- The Server Logs section displays real-time output from the llama-server process
+- The **GPU Usage** section shows real-time AMD GPU statistics:
+  - Temperature (°C)
+  - GPU utilization (%)
+  - Power consumption (W)
+- The **Server Logs** section displays real-time output from the llama-server process
 - Color-coded logs help identify errors, warnings, and token usage information
 
 ### Stopping a Model
@@ -104,12 +153,16 @@ Click the "Stop Model" button to terminate the server and clear the cache.
 ## 📁 Project Structure
 
 ```
-llama-cpp-web-ui/
+llama-cpp-model-controller-vulkan/
 ├── app.py                  # Flask application
+├── config.py               # Configuration file (paths, GPU settings)
 ├── templates/              # HTML templates
 │   └── index.html          # Main UI template
 ├── models/                 # GGUF model files (not included in repo)
-└── venv/                   # Python virtual environment
+├── venv/                   # Python virtual environment
+├── VULKAN_CONVERSION_GAMEPLAN.md  # Original conversion plan
+├── VULKAN_TODO.md          # Detailed implementation checklist
+└── CONVERSION_SUMMARY.md   # Summary of changes made
 ```
 
 ## ⚙️ Advanced Configuration
@@ -131,30 +184,49 @@ You can create preset configurations for each model by modifying the HTML templa
 ### Common Issues
 
 1. **Model fails to load**
-   - Ensure you have enough GPU memory
+   - Ensure you have enough GPU VRAM (check llama-server logs)
    - Try reducing context size or using fewer GPU layers
    - Check model file permissions
-   - Verify the `MODEL_DIR` path is correct and models exist at that location
+   - Verify the `MODEL_DIR` path in `config.py` is correct and models exist there
 
 2. **GPU not detected**
-   - Verify CUDA installation
-   - Check nvidia-smi output
-   - Ensure llama.cpp was compiled with CUDA support
+   - Verify Vulkan installation: `vulkaninfo | grep deviceName`
+   - Check that llama.cpp was compiled with Vulkan support
+   - Run `llama-cli --list-devices` to see available GPUs
+   - Ensure AMD GPU drivers are properly installed
 
-3. **Out of memory errors**
-   - Reduce context size
-   - Use a smaller model
-   - Adjust split mode settings
+3. **GPU stats not showing**
+   - Verify GPU card IDs in `config.py` match your system
+   - Check card mapping: `ls -la /sys/class/drm/`
+   - Ensure you have read permissions for `/sys/class/drm/card*/device/`
+   - For AMD GPUs: card1 and card2 typically correspond to physical GPUs
 
-4. **Llama-server executable not found**
-   - Check that the `LLAMA_CPP_PATH` points to your compiled llama-server executable
-   - Make sure llama.cpp is compiled with CUDA support
-   - Verify execution permissions with `chmod +x [path-to-llama-server]`
+4. **Out of memory errors**
+   - Reduce context size (try 8192 or 4096)
+   - Use a smaller quantized model (Q4 instead of Q8)
+   - Adjust tensor-split ratio to favor the GPU with more VRAM
+   - Reduce batch size and ubatch size
 
-5. **Path configuration issues**
+5. **Flash attention issues**
+   - Flash attention may not work on all AMD GPU/driver combinations
+   - Try disabling it in the UI if you encounter errors
+   - Check llama-server logs for flash attention related warnings
+
+6. **Tensor split not working as expected**
+   - Ensure format is comma-separated (e.g., "1,0.4")
+   - First value typically goes to main GPU
+   - Adjust based on actual VRAM capacity of each GPU
+   - Check llama-server logs for actual VRAM allocation
+
+7. **Llama-server executable not found**
+   - Check that `LLAMA_CPP_PATH` in `config.py` points to your Vulkan-compiled llama-server
+   - Verify llama.cpp was compiled with `-DGGML_VULKAN=ON`
+   - Verify execution permissions: `chmod +x [path-to-llama-server]`
+
+8. **Path configuration issues**
    - The application logs the paths it's using on startup - check these logs
-   - Ensure all directories exist and are accessible
-   - If running in a container or different environment, update paths accordingly
+   - Ensure all directories in `config.py` exist and are accessible
+   - Update `config.py` to match your environment
 
 ## 🤝 Contributing
 

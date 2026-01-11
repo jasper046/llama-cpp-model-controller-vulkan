@@ -7,24 +7,15 @@ import threading
 import time
 import re
 import queue
+import glob
 from collections import deque
 from flask import Flask, render_template, request, jsonify
+from config import HOME_DIR, LLAMA_CPP_PATH, MODEL_DIR, CACHE_DIR, SLOTS_DIR, GPU_CARDS
 
 # Set up logging
-logging.basicConfig(level=logging.DEBUG, 
+logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-#################################
-#### Configuration variables ####
-#################################
-
-# update these to match your environment
-HOME_DIR = os.path.expanduser("~")  # Dynamically get user's home directory
-PROJECT_DIR = os.path.join(HOME_DIR, "llama")  # Project directory
-MODEL_DIR = os.path.join(PROJECT_DIR, "models")  # Model directory
-LLAMA_CPP_PATH = os.path.join(PROJECT_DIR, "llama.cpp-b4823/build/bin/llama-server")  # Path to llama-server executable
-CACHE_DIR = os.path.join(HOME_DIR, ".cache/llama")  # Llama cache directory
 
 app = Flask(__name__)
 model_process = None
@@ -42,24 +33,48 @@ def get_models():
     return [f for f in os.listdir(MODEL_DIR) if f.endswith(".gguf")]
 
 def get_gpu_stats():
-    """Run nvidia-smi and extract key GPU usage stats."""
-    try:
-        result = subprocess.run(["nvidia-smi", "--query-gpu=index,name,temperature.gpu,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"], 
-                                stdout=subprocess.PIPE, text=True)
-        gpus = []
-        for line in result.stdout.strip().split("\n"):
-            index, name, temp, usage, mem_used, mem_total = line.split(", ")
+    """Get AMD GPU stats from sysfs"""
+    gpus = []
+
+    for card_id, card_name in GPU_CARDS:
+        try:
+            temp_path = f"/sys/class/drm/{card_id}/device/hwmon/hwmon*/temp1_input"
+            temp_files = glob.glob(temp_path)
+            temp = "N/A"
+            if temp_files:
+                with open(temp_files[0]) as f:
+                    temp = f"{int(f.read().strip()) // 1000}°C"
+
+            power_path = f"/sys/class/drm/{card_id}/device/hwmon/hwmon*/power1_average"
+            power_files = glob.glob(power_path)
+            power = "N/A"
+            if power_files:
+                with open(power_files[0]) as f:
+                    power = f"{int(f.read().strip()) // 1000000}W"
+
+            busy_path = f"/sys/class/drm/{card_id}/device/gpu_busy_percent"
+            usage = "N/A"
+            if os.path.exists(busy_path):
+                with open(busy_path) as f:
+                    usage = f"{f.read().strip()}%"
+
             gpus.append({
-                "index": index,
-                "name": name,
-                "temp": f"{temp}°C",
-                "usage": f"{usage}%",
-                "memory": f"{mem_used}MB / {mem_total}MB"
+                "index": card_id,
+                "name": card_name,
+                "temp": temp,
+                "usage": usage,
+                "power": power,
+                "memory": "See server logs"
             })
-        return gpus
-    except Exception as e:
-        logger.error(f"Error getting GPU stats: {e}")
-        return [{"error": str(e)}]
+        except Exception as e:
+            logger.error(f"Error reading {card_id}: {e}")
+            gpus.append({
+                "index": card_id,
+                "name": card_name,
+                "error": str(e)
+            })
+
+    return gpus
 
 def log_reader(process):
     """Read logs from the process stdout and stderr and add them to the buffer"""
@@ -120,54 +135,53 @@ def start_server():
         if not model:
             logger.error("No model selected!")
             return jsonify({"status": "No model selected!", "success": False})
-        
-        # Get other parameters with defaults
-        threads = request.form.get("threads", "16")
-        port = request.form.get("port", "8080")
+
+        # Get Vulkan parameters with defaults from working config
+        port = request.form.get("port", "4000")
         host = request.form.get("host", "0.0.0.0")
         ngl = request.form.get("ngl", "99")
-        c = request.form.get("c", "32000")
-        sm = request.form.get("sm", "layer")
-        np = request.form.get("np", "1")
-        
+        ctx_size = request.form.get("ctx_size", "16384")
+        batch_size = request.form.get("batch_size", "512")
+        ubatch_size = request.form.get("ubatch_size", "128")
+        main_gpu = request.form.get("main_gpu", "0")
+        tensor_split = request.form.get("tensor_split", "1,0.4")
+        flash_attn = request.form.get("flash_attn", "on")
+        parallel = request.form.get("parallel", "1")
+        cont_batching = request.form.get("cont_batching", "true")
+
         # Log the actual values being used
         logger.debug(f"Using model: {model}")
-        logger.debug(f"Threads: {threads}")
         logger.debug(f"Port: {port}")
         logger.debug(f"Host: {host}")
         logger.debug(f"GPU Layers (ngl): {ngl}")
-        logger.debug(f"Context size (c): {c}")
-        logger.debug(f"Split mode (sm): {sm}")
-        logger.debug(f"Parallel sequences (np): {np}")
+        logger.debug(f"Context size: {ctx_size}")
+        logger.debug(f"Batch size: {batch_size}")
+        logger.debug(f"UBatch size: {ubatch_size}")
+        logger.debug(f"Main GPU: {main_gpu}")
+        logger.debug(f"Tensor split: {tensor_split}")
+        logger.debug(f"Flash attention: {flash_attn}")
+        logger.debug(f"Parallel: {parallel}")
+        logger.debug(f"Continuous batching: {cont_batching}")
 
         env = os.environ.copy()
-        env["CUDA_VISIBLE_DEVICES"] = "0,1"
 
-        command = f"""
-        CUDA_VISIBLE_DEVICES=0,1 {LLAMA_CPP_PATH} \
-        -m {MODEL_DIR}/{model} --threads {threads} --port {port} --host {host} \
-        -ngl {ngl} -c {c} -sm {sm} -np {np}
-        """
+        command = f"""{LLAMA_CPP_PATH} \
+-m {MODEL_DIR}/{model} \
+--ctx-size {ctx_size} \
+--n-gpu-layers {ngl} \
+--main-gpu {main_gpu} \
+--tensor-split {tensor_split} \
+--flash-attn {flash_attn} \
+--batch-size {batch_size} \
+--ubatch-size {ubatch_size} \
+--port {port} \
+--host {host} \
+--parallel {parallel} \
+--slot-save-path {SLOTS_DIR} \
+{"--cont-batching" if cont_batching == "true" else ""}"""
         
         # Log the final command being executed
         logger.debug(f"Executing command: {command}")
-
-        # Compare with known working command (for debugging)
-        working_command = f"""CUDA_VISIBLE_DEVICES=0,1 {LLAMA_CPP_PATH} \
-        -m {MODEL_DIR}/Qwen2.5-Coder-32B-Instruct-Q8_0.gguf --threads 16 --port 8080 --host 0.0.0.0 \
-        -ngl 99 -c 32000 -sm row -np 1"""
-
-        logger.debug("Command comparison:")
-        logger.debug(f"Working command: {working_command}")
-        logger.debug(f"Generated command: {command}")
-        logger.debug("Differences:")
-        if model == "Qwen2.5-Coder-32B-Instruct-Q8_0.gguf":
-            if threads != "16": logger.debug(f"  Threads: 16 vs {threads}")
-            if port != "8080": logger.debug(f"  Port: 8080 vs {port}")
-            if host != "0.0.0.0": logger.debug(f"  Host: 0.0.0.0 vs {host}")
-            if ngl != "99": logger.debug(f"  GPU Layers: 99 vs {ngl}")
-            if c != "32000": logger.debug(f"  Context Size: 32000 vs {c}")
-            if np != "1": logger.debug(f"  Parallel Sequences: 1 vs {np}")
 
         # Clear the log buffers before starting a new process
         log_buffer.clear()
@@ -176,7 +190,7 @@ def start_server():
 
         # Add a special status message to the logs
         timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-        start_msg = f"[{timestamp}] STARTING MODEL: {model} with threads={threads}, port={port}, host={host}, ngl={ngl}, c={c}, sm={sm}, np={np}"
+        start_msg = f"[{timestamp}] STARTING MODEL: {model} on {host}:{port}"
         log_buffer.append(start_msg)
         log_queue.put(start_msg)
         logger.debug(start_msg)
