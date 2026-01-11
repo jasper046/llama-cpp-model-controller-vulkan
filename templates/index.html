@@ -67,13 +67,14 @@
                 <div>
                     <label class="block text-left mb-1">Main GPU</label>
                     <select id="main_gpu" name="main_gpu" form="modelForm" class="w-full bg-gray-700 text-white p-2 rounded mb-3">
-                        <option value="0">GPU 0 (RX 480)</option>
-                        <option value="1">GPU 1 (RX 6600)</option>
+                        {% for gpu in gpus %}
+                        <option value="{{ gpu.vulkan_id }}">GPU {{ gpu.vulkan_id }} ({{ gpu.display_name }})</option>
+                        {% endfor %}
                     </select>
                 </div>
 
                 <div>
-                    <label class="block text-left mb-1">Tensor Split (GPU0,GPU1)</label>
+                    <label class="block text-left mb-1">{{ tensor_split_label }}</label>
                     <input type="text" id="tensor_split" name="tensor_split" form="modelForm" value="1,0.4" placeholder="1,0.4" class="w-full bg-gray-700 text-white p-2 rounded mb-3">
                 </div>
 
@@ -168,7 +169,7 @@
             gpus.forEach(gpu => {
                 gpuContainer.innerHTML += `
                     <div class="p-3 bg-gray-700 rounded">
-                        <p><strong>${gpu.name} (${gpu.index})</strong></p>
+                        <p><strong>${gpu.name} (card: ${gpu.index}, Vulkan: ${gpu.vulkan_id})</strong></p>
                         <p>Temp: ${gpu.temp} | Usage: ${gpu.usage}</p>
                         <p>Power: ${gpu.power}</p>
                         ${gpu.memory ? `<p>Memory: ${gpu.memory}</p>` : ''}

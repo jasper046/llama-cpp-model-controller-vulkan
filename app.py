@@ -36,7 +36,7 @@ def get_gpu_stats():
     """Get AMD GPU stats from sysfs"""
     gpus = []
 
-    for card_id, card_name in GPU_CARDS:
+    for card_id, card_name, vulkan_id in GPU_CARDS:
         try:
             temp_path = f"/sys/class/drm/{card_id}/device/hwmon/hwmon*/temp1_input"
             temp_files = glob.glob(temp_path)
@@ -61,6 +61,7 @@ def get_gpu_stats():
             gpus.append({
                 "index": card_id,
                 "name": card_name,
+                "vulkan_id": vulkan_id,
                 "temp": temp,
                 "usage": usage,
                 "power": power,
@@ -71,6 +72,7 @@ def get_gpu_stats():
             gpus.append({
                 "index": card_id,
                 "name": card_name,
+                "vulkan_id": vulkan_id,
                 "error": str(e)
             })
 
@@ -85,7 +87,7 @@ def log_reader(process):
             try:
                 line_str = line.decode('utf-8').rstrip()
                 timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-                log_entry = f"[{timestamp}] {prefix}: {line_str}"
+                log_entry = f"[{timestamp}] {line_str}"
                 log_buffer.append(log_entry)
                 log_queue.put(log_entry)
                 logger.debug(f"Log: {log_entry}")
@@ -99,7 +101,22 @@ def log_reader(process):
 @app.route("/")
 def index():
     models = get_models()
-    return render_template("index.html", models=models)
+    # Prepare GPU list sorted by Vulkan ID (0, 1, ...)
+    gpus = []
+    for card_id, display_name, vulkan_id in sorted(GPU_CARDS, key=lambda x: x[2]):
+        gpus.append({
+            "vulkan_id": vulkan_id,
+            "display_name": display_name,
+            "card_id": card_id
+        })
+
+    # Create tensor split label showing GPU mapping
+    tensor_split_parts = []
+    for gpu in gpus:
+        tensor_split_parts.append(f"GPU{gpu['vulkan_id']}: {gpu['display_name']}")
+    tensor_split_label = f"Tensor Split ({', '.join(tensor_split_parts)})"
+
+    return render_template("index.html", models=models, gpus=gpus, tensor_split_label=tensor_split_label)
 
 @app.route("/gpu")
 def gpu_stats():
@@ -294,7 +311,15 @@ if __name__ == "__main__":
             os.makedirs(MODEL_DIR, exist_ok=True)
         except Exception as e:
             logger.error(f"Failed to create model directory: {e}")
-    
+
+    # Check if slots directory exists
+    if not os.path.exists(SLOTS_DIR):
+        logger.warning(f"Slots directory {SLOTS_DIR} does not exist. Creating it...")
+        try:
+            os.makedirs(SLOTS_DIR, exist_ok=True)
+        except Exception as e:
+            logger.error(f"Failed to create slots directory: {e}")
+
     # Check if llama-server exists
     if not os.path.exists(LLAMA_CPP_PATH):
         logger.error(f"llama-server executable not found at {LLAMA_CPP_PATH}")

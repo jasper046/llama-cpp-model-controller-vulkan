@@ -122,10 +122,12 @@ MODEL_DIR = os.path.join(HOME_DIR, "models")    # Directory containing GGUF mode
 CACHE_DIR = os.path.join(HOME_DIR, ".cache/llama")
 SLOTS_DIR = "/tmp/llama_slots"                  # Will be created automatically
 
-# Update card IDs and names based on your system (check /sys/class/drm/)
+# Update card IDs, names, and Vulkan device IDs based on your system
+# Format: (sysfs_card_id, display_name, vulkan_device_id)
+# Use `llama-cli --list-devices` to see Vulkan device order
 GPU_CARDS = [
-    ("card1", "RX 470"),    # Ellesmere [Radeon RX 470/480/570...]
-    ("card2", "RX 6600")    # Navi 23 [Radeon RX 6600/6600 XT/6600M]
+    ("card1", "RX 470", 1),    # Ellesmere [Radeon RX 470/480/570...] = Vulkan device 1
+    ("card2", "RX 6600", 0)    # Navi 23 [Radeon RX 6600/6600 XT/6600M] = Vulkan device 0
 ]
 ```
 
@@ -134,7 +136,7 @@ You can modify these values to match your specific environment:
 - `MODEL_DIR`: Where your GGUF models are stored
 - `CACHE_DIR`: Where llama.cpp stores its cache files
 - `SLOTS_DIR`: Directory for saving conversation slots
-- `GPU_CARDS`: List of GPU cards for monitoring (check `/sys/class/drm/` for card IDs)
+- `GPU_CARDS`: List of GPU cards with sysfs ID, display name, and Vulkan device ID
 
 
 ## 🖥️ Usage
@@ -159,8 +161,8 @@ The web interface will be available at `http://localhost:5000` by default.
    - **Host**: Server host (default: 0.0.0.0)
 
    **Advanced Settings:**
-   - **Main GPU**: Primary GPU for computation (0: RX 470, 1: RX 6600)
-   - **Tensor Split**: Ratio for distributing model across GPUs (default: 1,0.4)
+   - **Main GPU**: Primary GPU for computation (Vulkan device ID, matches llama-cli --list-devices output)
+   - **Tensor Split**: Ratio for distributing model across GPUs in Vulkan device order (default: 1,0.4)
    - **Batch Size**: Processing batch size (default: 512)
    - **UBatch Size**: Micro-batch size (default: 128)
    - **Flash Attention**: Enable/disable flash attention optimization
