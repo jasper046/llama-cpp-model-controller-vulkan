@@ -13,7 +13,39 @@ This is a Vulkan-enabled fork of [Dan-Duran's Llama.cpp Model Controller](https:
 - ✅ **Parameters**: Full Vulkan parameter support (tensor-split, flash attention, continuous batching, etc.)
 - ✅ **UI**: Updated form controls for Vulkan-specific settings
 
-**Current Status:** Code conversion complete, ready for testing on target hardware with RX 480 + RX 6600.
+**Current Status:** Code conversion complete, ready for testing on target hardware with RX 470 + RX 6600.
+
+---
+
+## 🚀 Quick Start
+
+### 1. Clone and setup
+```bash
+git clone https://github.com/Dan-Duran/llama-cpp-model-controller.git
+cd llama-cpp-model-controller
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+### 2. Configure paths
+Edit `config.py` to match your environment:
+- `LLAMA_CPP_PATH`: Path to Vulkan-compiled llama-server
+- `MODEL_DIR`: Directory containing your GGUF models
+- `GPU_CARDS`: Update GPU card IDs and names (check `/sys/class/drm/`)
+
+### 3. Start the controller
+```bash
+source venv/bin/activate
+python app.py
+```
+Access the web UI at `http://localhost:5000`
+
+### 4. Deploy your first model
+1. Select a GGUF model from the dropdown
+2. Use default parameters or customize as needed
+3. Click "Start Model"
+4. Access the model at `http://localhost:4000`
 
 ---
 
@@ -38,12 +70,12 @@ Before using this controller, verify your Vulkan installation:
 vulkaninfo | grep deviceName
 
 # List available compute devices in llama.cpp
-~//usr/local/bin/llama-cli --list-devices
+/usr/local/bin/llama-cli --list-devices
 
-# Expected output for dual AMD setup:
+# Expected output for dual AMD setup (order may vary):
 # ggml_vulkan: Found 2 Vulkan devices:
-# ggml_vulkan: 0 = AMD Radeon RX 480 ...
-# ggml_vulkan: 1 = AMD Radeon RX 6600 ...
+# ggml_vulkan: 0 = AMD Radeon RX 6600 ...
+# ggml_vulkan: 1 = AMD Radeon RX 470 Graphics ...
 ```
 
 ## 🚀 Installation
@@ -58,14 +90,14 @@ cd llama-cpp-model-controller
 ### 2. Create a virtual environment
 
 ```bash
-python -m venv venv
+python3 -m venv venv
 source venv/bin/activate
 ```
 
 ### 3. Install dependencies
 
 ```bash
-pip install flask
+pip install -r requirements.txt
 ```
 
 ### 4. Set up model directory
@@ -85,14 +117,15 @@ Edit `config.py` to customize the paths and GPU configuration:
 import os
 
 HOME_DIR = os.path.expanduser("~")
-LLAMA_CPP_PATH = os.path.join(HOME_DIR, "/usr/local/bin/llama-server")
-MODEL_DIR = os.path.join(HOME_DIR, "models")
+LLAMA_CPP_PATH = "/usr/local/bin/llama-server"  # Path to Vulkan-compiled llama-server
+MODEL_DIR = os.path.join(HOME_DIR, "models")    # Directory containing GGUF models
 CACHE_DIR = os.path.join(HOME_DIR, ".cache/llama")
-SLOTS_DIR = "/tmp/llama_slots"
+SLOTS_DIR = "/tmp/llama_slots"                  # Will be created automatically
 
+# Update card IDs and names based on your system (check /sys/class/drm/)
 GPU_CARDS = [
-    ("card1", "RX 480"),
-    ("card2", "RX 6600")
+    ("card1", "RX 470"),    # Ellesmere [Radeon RX 470/480/570...]
+    ("card2", "RX 6600")    # Navi 23 [Radeon RX 6600/6600 XT/6600M]
 ]
 ```
 
@@ -126,7 +159,7 @@ The web interface will be available at `http://localhost:5000` by default.
    - **Host**: Server host (default: 0.0.0.0)
 
    **Advanced Settings:**
-   - **Main GPU**: Primary GPU for computation (0: RX 480, 1: RX 6600)
+   - **Main GPU**: Primary GPU for computation (0: RX 470, 1: RX 6600)
    - **Tensor Split**: Ratio for distributing model across GPUs (default: 1,0.4)
    - **Batch Size**: Processing batch size (default: 512)
    - **UBatch Size**: Micro-batch size (default: 128)
