@@ -1,48 +1,13 @@
-# NOTE: WORK IN PROGRESS, VULKAN CONVERSION IS WIP
+# NOTE: WORK IN PROGRESS, VULKAN CONVERSION IS ONGOING
 
 # Llama.cpp Model Controller 🦙
 
-This is a fork of ![Dan-Duran's Llama.cpp Model Controller](https://github.com/Dan-Duran/llama-cpp-model-controller), that supports cuda. I will convert it to use vulkan (for multi/mixed-new/old gpu support)
+This is a fork of [Dan-Duran's Llama.cpp Model Controller](https://github.com/Dan-Duran/llama-cpp-model-controller), that supports cuda. I will convert it to use vulkan (for multi/mixed-new/old gpu support)
 
 
 The Llama.cpp Model Controller is an intuitive web interface for managing local LLM deployments powered by llama.cpp. This application streamlines the process of starting, monitoring, and stopping language models through a clean, responsive UI, eliminating the need for complex command-line operations.
 
 Key features include real-time GPU monitoring with temperature and memory usage statistics, color-coded live server logs showing token usage and model output, and customizable deployment parameters. Users can easily configure thread count, context size, and GPU allocation strategies for optimal performance on their hardware.
-
-## 🖥️ Screenshot
-
-![controller](https://github.com/user-attachments/assets/495120f9-c51a-4545-838a-0aeb4e6af1ec)
-
-## 🌟 Features
-
-- **Simple Model Management** - Start and stop models with a clean, intuitive interface
-- **Real-time GPU Monitoring** - Track GPU temperature, memory usage and utilization
-- **Live Server Logs** - View token usage and server output in real-time with color-coded logs
-- **Customizable Parameters** - Configure threads, context size, GPU layers and more
-- **Multi-GPU Support** - Choose between layer and row split modes for optimal multi-GPU performance
-- **Responsive Design** - Works on desktop and mobile devices
-- **Per-Model Configuration** - Save and load different settings for each model
-
-## 💪 Join me! 
-- **👉 Subscribe to my YouTube Channel [GetCyber - YouTube](https://youtube.com/getCyber)**
-- **👉 Checkout some more awesome tools at [GetCyber](https://getcyber.me/tools)**
-- **👉 Discord Server [GetCyber - Discord](https://discord.gg/YUf3VpDeNH)**
-
-> 
-> ### 💝 Support My Work
-> 
-> [![Sponsor my work](https://img.shields.io/badge/Sponsor_my_work-30363D?style=for-the-badge&logo=GitHub-Sponsors&logoColor=#EA4AAA)](https://github.com/sponsors/Dan-Duran)
->
-> <details>
-> <summary>Why sponsor?</summary>
-> Your sponsorship helps keep my open-source projects alive! From interactive learning tools to security guides, every contribution makes a difference in keeping these resources free and accessible to everyone.
->
-> - 🔨 Maintain and improve existing tools
-> - 📚 Create new educational content
-> - 🌐 Keep resources free and accessible
-> - 💡 Dedicate more time to community projects
-> </details>
-> 
 
 ## 📋 Requirements
 
