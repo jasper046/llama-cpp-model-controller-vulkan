@@ -197,32 +197,22 @@
                     <div class="p-3 bg-gray-700 rounded">
                         <p class="font-bold text-lg">${gpu.name} (card: ${gpu.index}, Vulkan: ${gpu.vulkan_id})</p>
 
-                        <div class="grid grid-cols-2 gap-2 mt-2">
+                        <!-- Other Stats Grid -->
+                        <div class="grid grid-cols-2 gap-2 mt-3">
                             <div>
                                 <p class="text-sm">Temp: <span class="font-semibold">${gpu.temp}</span></p>
                                 <p class="text-sm">Power: <span class="font-semibold">${gpu.power}</span></p>
-                                <p class="text-sm">GPU Clock: <span class="font-semibold">${gpu.gpu_clock || 'N/A'}</span></p>
-                                <p class="text-sm">Mem Clock: <span class="font-semibold">${gpu.mem_clock || 'N/A'}</span></p>
                             </div>
                             <div>
                                 <p class="text-sm">Fan Speed: <span class="font-semibold">${gpu.fan_speed || 'N/A'}</span></p>
                                 <p class="text-sm">Usage: <span class="font-semibold">${gpu.usage}</span></p>
-                                ${gpu.usage && gpu.usage !== 'N/A' ? `
-                                <div class="mt-1">
-                                    <div class="flex justify-between text-xs mb-1">
-                                        <span>GPU Usage</span>
-                                        <span>${gpuUsagePercent}%</span>
-                                    </div>
-                                    <div class="w-full bg-gray-800 rounded-full h-2">
-                                        <div class="bg-green-500 h-2 rounded-full" style="width: ${gpuUsagePercent}%"></div>
-                                    </div>
-                                </div>` : ''}
                             </div>
                         </div>
 
                         ${gpu.memory ? `
                         <div class="mt-3 pt-3 border-t border-gray-600">
                             <p class="text-sm mb-1">Memory: <span class="font-semibold">${gpu.memory}</span></p>
+                            <p class="text-sm mb-2">Mem Clock: <span class="font-semibold">${gpu.mem_clock || 'N/A'}</span></p>
                             ${gpu.memory.includes('Gi/') ? `
                             <div class="flex justify-between text-xs mb-1">
                                 <span>VRAM Usage</span>
@@ -232,6 +222,21 @@
                                 <div class="bg-blue-500 h-2 rounded-full" style="width: ${memPercent}%"></div>
                             </div>` : ''}
                         </div>` : ''}
+
+                        <!-- GPU Clock and Usage Bar -->
+                        <div class="mt-3 pt-3 border-t border-gray-600">
+                            <p class="text-sm mb-1">GPU Clock: <span class="font-semibold">${gpu.gpu_clock || 'N/A'}</span></p>
+                            ${gpu.usage && gpu.usage !== 'N/A' ? `
+                            <div class="mt-1">
+                                <div class="flex justify-between text-xs mb-1">
+                                    <span>GPU Usage</span>
+                                    <span>${gpuUsagePercent}%</span>
+                                </div>
+                                <div class="w-full bg-gray-800 rounded-full h-2">
+                                    <div class="bg-green-500 h-2 rounded-full" style="width: ${gpuUsagePercent}%"></div>
+                                </div>
+                            </div>` : ''}
+                        </div>
                     </div>
                 `;
             });
@@ -347,7 +352,7 @@
         updateStatus();
         updateGPUStats();
         setInterval(updateStatus, 5000);
-        setInterval(updateGPUStats, 5000);
+        setInterval(updateGPUStats, 2000);
         setInterval(fetchServerLogs, 1000); // Fetch logs every second
     </script>
 </body>
