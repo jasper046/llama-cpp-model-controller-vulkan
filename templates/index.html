@@ -27,14 +27,17 @@
                             {% endfor %}
                         </select>
 
-                        <div class="flex justify-between space-x-2">
-                            <button type="submit" class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded mb-2 flex-1">
+                        <div class="flex justify-between space-x-2 mb-2">
+                            <button type="submit" class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded flex-1">
                                 Start Model
                             </button>
-                            <button id="stop" type="button" class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded mb-2 flex-1">
+                            <button id="stop" type="button" class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded flex-1">
                                 Stop Model
                             </button>
                         </div>
+                        <button id="reset-defaults" type="button" class="w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded mb-2">
+                            Reset to Defaults
+                        </button>
                     </form>
                 </div>
 
@@ -155,6 +158,158 @@
     </div>
 
     <script>
+        // Settings persistence
+        const STORAGE_KEY = 'llama_model_controller_settings';
+
+        function saveSettingsToLocalStorage() {
+            const settings = {};
+
+            // Model selection - store index, not value
+            const modelSelect = document.getElementById('model');
+            if (modelSelect) {
+                settings.model_index = modelSelect.selectedIndex;
+            }
+
+            // Model parameters
+            settings.ngl = document.getElementById('ngl').value;
+            settings.ctx_size = document.getElementById('ctx_size').value;
+            settings.port = document.getElementById('port').value;
+            settings.host = document.getElementById('host').value;
+
+            // Advanced settings
+            settings.main_gpu = document.getElementById('main_gpu').value;
+            settings.tensor_split = document.getElementById('tensor_split').value;
+            settings.batch_size = document.getElementById('batch_size').value;
+            settings.ubatch_size = document.getElementById('ubatch_size').value;
+            settings.flash_attn = document.getElementById('flash_attn').value;
+            settings.parallel = document.getElementById('parallel').value;
+            settings.cont_batching = document.getElementById('cont_batching').value;
+
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+            console.log('Settings saved to localStorage:', settings);
+        }
+
+        function loadSettingsFromLocalStorage() {
+            const saved = localStorage.getItem(STORAGE_KEY);
+            if (!saved) return false;
+
+            try {
+                const settings = JSON.parse(saved);
+
+                // Model selection - restore by index
+                if (settings.model_index !== undefined) {
+                    const modelSelect = document.getElementById('model');
+                    if (modelSelect && modelSelect.options.length > settings.model_index) {
+                        modelSelect.selectedIndex = settings.model_index;
+                    }
+                }
+
+                // Model parameters
+                if (settings.ngl !== undefined) document.getElementById('ngl').value = settings.ngl;
+                if (settings.ctx_size !== undefined) document.getElementById('ctx_size').value = settings.ctx_size;
+                if (settings.port !== undefined) document.getElementById('port').value = settings.port;
+                if (settings.host !== undefined) document.getElementById('host').value = settings.host;
+
+                // Advanced settings
+                if (settings.main_gpu !== undefined) document.getElementById('main_gpu').value = settings.main_gpu;
+                if (settings.tensor_split !== undefined) document.getElementById('tensor_split').value = settings.tensor_split;
+                if (settings.batch_size !== undefined) document.getElementById('batch_size').value = settings.batch_size;
+                if (settings.ubatch_size !== undefined) document.getElementById('ubatch_size').value = settings.ubatch_size;
+                if (settings.flash_attn !== undefined) document.getElementById('flash_attn').value = settings.flash_attn;
+                if (settings.parallel !== undefined) document.getElementById('parallel').value = settings.parallel;
+                if (settings.cont_batching !== undefined) document.getElementById('cont_batching').value = settings.cont_batching;
+
+                console.log('Settings loaded from localStorage:', settings);
+                return true;
+            } catch (e) {
+                console.error('Error loading settings from localStorage:', e);
+                return false;
+            }
+        }
+
+        async function saveSettingsToBackend() {
+            const settings = {};
+
+            // Collect settings same as localStorage
+            const modelSelect = document.getElementById('model');
+            if (modelSelect) {
+                settings.model_index = modelSelect.selectedIndex;
+            }
+
+            settings.ngl = document.getElementById('ngl').value;
+            settings.ctx_size = document.getElementById('ctx_size').value;
+            settings.port = document.getElementById('port').value;
+            settings.host = document.getElementById('host').value;
+            settings.main_gpu = document.getElementById('main_gpu').value;
+            settings.tensor_split = document.getElementById('tensor_split').value;
+            settings.batch_size = document.getElementById('batch_size').value;
+            settings.ubatch_size = document.getElementById('ubatch_size').value;
+            settings.flash_attn = document.getElementById('flash_attn').value;
+            settings.parallel = document.getElementById('parallel').value;
+            settings.cont_batching = document.getElementById('cont_batching').value;
+
+            try {
+                const response = await fetch('/save_settings', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(settings)
+                });
+                const result = await response.json();
+                if (result.success) {
+                    console.log('Settings saved to backend:', result.status);
+                } else {
+                    console.error('Failed to save settings to backend:', result.status);
+                }
+                return result.success;
+            } catch (e) {
+                console.error('Error saving settings to backend:', e);
+                return false;
+            }
+        }
+
+        async function resetSettings() {
+            // Clear localStorage
+            localStorage.removeItem(STORAGE_KEY);
+
+            // Reset backend settings
+            try {
+                const response = await fetch('/reset_settings', { method: 'POST' });
+                const result = await response.json();
+                if (result.success) {
+                    console.log('Backend settings reset:', result.status);
+                } else {
+                    console.error('Failed to reset backend settings:', result.status);
+                }
+            } catch (e) {
+                console.error('Error resetting backend settings:', e);
+            }
+
+            // Reload page to apply defaults
+            location.reload();
+        }
+
+        // Set up event listeners for auto-saving
+        function setupAutoSave() {
+            const inputs = [
+                'model', 'ngl', 'ctx_size', 'port', 'host',
+                'main_gpu', 'tensor_split', 'batch_size', 'ubatch_size',
+                'flash_attn', 'parallel', 'cont_batching'
+            ];
+
+            inputs.forEach(id => {
+                const element = document.getElementById(id);
+                if (element) {
+                    element.addEventListener('change', () => {
+                        saveSettingsToLocalStorage();
+                        // Optionally save to backend on change (uncomment if desired)
+                        // saveSettingsToBackend();
+                    });
+                }
+            });
+        }
+
         async function updateStatus() {
             let response = await fetch("/status");
             let data = await response.json();
@@ -325,24 +480,37 @@
             updateStatus();
         });
 
-        // Add event listeners for the log controls
+        // Add event listeners for the log controls and settings
         document.addEventListener("DOMContentLoaded", function() {
+            // Load saved settings
+            loadSettingsFromLocalStorage();
+
+            // Setup auto-save on form changes
+            setupAutoSave();
+
+            // Reset defaults button
+            const resetDefaultsBtn = document.getElementById("reset-defaults");
+            if (resetDefaultsBtn) {
+                resetDefaultsBtn.addEventListener("click", resetSettings);
+            }
+
+            // Log controls
             const clearLogsBtn = document.getElementById("clear-logs");
             const autoScrollBtn = document.getElementById("auto-scroll");
-            
+
             if (clearLogsBtn) {
                 clearLogsBtn.addEventListener("click", () => {
                     document.getElementById("server-logs").innerHTML = "";
                 });
             }
-            
+
             if (autoScrollBtn) {
                 autoScrollBtn.addEventListener("click", () => {
                     const currentState = autoScrollBtn.getAttribute("data-enabled") === "true";
                     const newState = !currentState;
                     autoScrollBtn.setAttribute("data-enabled", newState);
                     autoScrollBtn.textContent = `Auto-scroll: ${newState ? "ON" : "OFF"}`;
-                    autoScrollBtn.className = newState 
+                    autoScrollBtn.className = newState
                         ? "bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm ml-2"
                         : "bg-gray-600 hover:bg-gray-700 text-white px-3 py-1 rounded text-sm ml-2";
                 });

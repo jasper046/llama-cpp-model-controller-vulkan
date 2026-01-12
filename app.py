@@ -11,6 +11,7 @@ import glob
 from collections import deque
 from flask import Flask, render_template, request, jsonify
 from config import HOME_DIR, LLAMA_CPP_PATH, MODEL_DIR, CACHE_DIR, SLOTS_DIR, GPU_CARDS
+from settings_handler import SettingsHandler
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG,
@@ -221,18 +222,20 @@ def start_server():
             logger.error("No model selected!")
             return jsonify({"status": "No model selected!", "success": False})
 
-        # Get Vulkan parameters with defaults from working config
-        port = request.form.get("port", "4000")
-        host = request.form.get("host", "0.0.0.0")
-        ngl = request.form.get("ngl", "99")
-        ctx_size = request.form.get("ctx_size", "16384")
-        batch_size = request.form.get("batch_size", "512")
-        ubatch_size = request.form.get("ubatch_size", "128")
-        main_gpu = request.form.get("main_gpu", "0")
-        tensor_split = request.form.get("tensor_split", "1,0.4")
-        flash_attn = request.form.get("flash_attn", "on")
-        parallel = request.form.get("parallel", "1")
-        cont_batching = request.form.get("cont_batching", "true")
+        # Get Vulkan parameters with user preferences as defaults
+        form_defaults = SettingsHandler.get_form_defaults(request.form)
+
+        port = form_defaults.get("port", "4000")
+        host = form_defaults.get("host", "0.0.0.0")
+        ngl = form_defaults.get("ngl", "99")
+        ctx_size = form_defaults.get("ctx_size", "16384")
+        batch_size = form_defaults.get("batch_size", "512")
+        ubatch_size = form_defaults.get("ubatch_size", "128")
+        main_gpu = form_defaults.get("main_gpu", "0")
+        tensor_split = form_defaults.get("tensor_split", "1,0.4")
+        flash_attn = form_defaults.get("flash_attn", "on")
+        parallel = form_defaults.get("parallel", "1")
+        cont_batching = form_defaults.get("cont_batching", "true")
 
         # Log the actual values being used
         logger.debug(f"Using model: {model}")
@@ -347,6 +350,51 @@ def stop_server():
 @app.route("/status")
 def status():
     return jsonify({"running": model_process is not None})
+
+@app.route("/save_settings", methods=["POST"])
+def save_settings():
+    """Save user settings from frontend"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"status": "No data provided", "success": False})
+
+        # Save each setting
+        for key, value in data.items():
+            if key == "model_index":
+                # Store model index as integer
+                SettingsHandler.save_setting("model_index", int(value))
+            elif key in ["ngl", "ctx_size", "port", "host", "main_gpu", "tensor_split",
+                        "batch_size", "ubatch_size", "flash_attn", "parallel", "cont_batching"]:
+                SettingsHandler.save_setting(key, value)
+
+        return jsonify({"status": "Settings saved successfully", "success": True})
+    except Exception as e:
+        logger.exception(f"Error saving settings: {e}")
+        return jsonify({"status": f"Error: {str(e)}", "success": False})
+
+@app.route("/reset_settings", methods=["POST"])
+def reset_settings():
+    """Reset all settings to defaults"""
+    try:
+        success = SettingsHandler.reset_to_defaults()
+        if success:
+            return jsonify({"status": "Settings reset to defaults", "success": True})
+        else:
+            return jsonify({"status": "Failed to reset settings", "success": False})
+    except Exception as e:
+        logger.exception(f"Error resetting settings: {e}")
+        return jsonify({"status": f"Error: {str(e)}", "success": False})
+
+@app.route("/get_settings", methods=["GET"])
+def get_settings():
+    """Get current user settings"""
+    try:
+        settings = SettingsHandler.load_settings()
+        return jsonify({"settings": settings, "success": True})
+    except Exception as e:
+        logger.exception(f"Error getting settings: {e}")
+        return jsonify({"status": f"Error: {str(e)}", "success": False})
 
 # Ensure the model process is killed when Flask exits
 def cleanup():
