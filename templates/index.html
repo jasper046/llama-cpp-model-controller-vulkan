@@ -167,12 +167,65 @@
             }
 
             gpus.forEach(gpu => {
+                // Parse GPU usage percentage
+                let gpuUsagePercent = 0;
+                let gpuUsageText = gpu.usage;
+                if (gpu.usage && gpu.usage !== 'N/A') {
+                    const match = gpu.usage.match(/(\d+)%/);
+                    if (match) gpuUsagePercent = parseInt(match[1]);
+                }
+
+                // Parse memory usage
+                let memUsed = 0, memTotal = 0, memPercent = 0;
+                let memText = gpu.memory;
+                if (gpu.memory && gpu.memory.includes('Gi/')) {
+                    const memMatch = gpu.memory.match(/(\d+\.?\d*)Gi\/(\d+\.?\d*)Gi/);
+                    if (memMatch) {
+                        memUsed = parseFloat(memMatch[1]);
+                        memTotal = parseFloat(memMatch[2]);
+                        if (memTotal > 0) memPercent = Math.round((memUsed / memTotal) * 100);
+                    }
+                }
+
                 gpuContainer.innerHTML += `
                     <div class="p-3 bg-gray-700 rounded">
-                        <p><strong>${gpu.name} (card: ${gpu.index}, Vulkan: ${gpu.vulkan_id})</strong></p>
-                        <p>Temp: ${gpu.temp} | Usage: ${gpu.usage}</p>
-                        <p>Power: ${gpu.power}</p>
-                        ${gpu.memory ? `<p>Memory: ${gpu.memory}</p>` : ''}
+                        <p class="font-bold text-lg">${gpu.name} (card: ${gpu.index}, Vulkan: ${gpu.vulkan_id})</p>
+
+                        <div class="grid grid-cols-2 gap-2 mt-2">
+                            <div>
+                                <p class="text-sm">Temp: <span class="font-semibold">${gpu.temp}</span></p>
+                                <p class="text-sm">Power: <span class="font-semibold">${gpu.power}</span></p>
+                                <p class="text-sm">GPU Clock: <span class="font-semibold">${gpu.gpu_clock || 'N/A'}</span></p>
+                                <p class="text-sm">Mem Clock: <span class="font-semibold">${gpu.mem_clock || 'N/A'}</span></p>
+                            </div>
+                            <div>
+                                <p class="text-sm">Fan Speed: <span class="font-semibold">${gpu.fan_speed || 'N/A'}</span></p>
+                                <p class="text-sm">Usage: <span class="font-semibold">${gpu.usage}</span></p>
+                                ${gpu.usage && gpu.usage !== 'N/A' ? `
+                                <div class="mt-1">
+                                    <div class="flex justify-between text-xs mb-1">
+                                        <span>GPU Usage</span>
+                                        <span>${gpuUsagePercent}%</span>
+                                    </div>
+                                    <div class="w-full bg-gray-800 rounded-full h-2">
+                                        <div class="bg-green-500 h-2 rounded-full" style="width: ${gpuUsagePercent}%"></div>
+                                    </div>
+                                </div>` : ''}
+                            </div>
+                        </div>
+
+                        ${gpu.memory ? `
+                        <div class="mt-3 pt-3 border-t border-gray-600">
+                            <p class="text-sm mb-1">Memory: <span class="font-semibold">${gpu.memory}</span></p>
+                            ${gpu.memory.includes('Gi/') ? `
+                            <div class="flex justify-between text-xs mb-1">
+                                <span>VRAM Usage</span>
+                                <span>${memPercent}% (${memUsed.toFixed(2)}Gi/${memTotal.toFixed(2)}Gi)</span>
+                            </div>
+                            <div class="w-full bg-gray-800 rounded-full h-2">
+                                <div class="bg-blue-500 h-2 rounded-full" style="width: ${memPercent}%"></div>
+                            </div>` : ''}
+                        </div>` : ''}
                     </div>
                 `;
             });

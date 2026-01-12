@@ -38,6 +38,7 @@ def get_gpu_stats():
 
     for card_id, card_name, vulkan_id in GPU_CARDS:
         try:
+            # Temperature
             temp_path = f"/sys/class/drm/{card_id}/device/hwmon/hwmon*/temp1_input"
             temp_files = glob.glob(temp_path)
             temp = "N/A"
@@ -45,6 +46,7 @@ def get_gpu_stats():
                 with open(temp_files[0]) as f:
                     temp = f"{int(f.read().strip()) // 1000}°C"
 
+            # Power usage
             power_path = f"/sys/class/drm/{card_id}/device/hwmon/hwmon*/power1_average"
             power_files = glob.glob(power_path)
             power = "N/A"
@@ -52,11 +54,74 @@ def get_gpu_stats():
                 with open(power_files[0]) as f:
                     power = f"{int(f.read().strip()) // 1000000}W"
 
+            # GPU usage percentage
             busy_path = f"/sys/class/drm/{card_id}/device/gpu_busy_percent"
             usage = "N/A"
             if os.path.exists(busy_path):
                 with open(busy_path) as f:
                     usage = f"{f.read().strip()}%"
+
+            # GPU clock (MHz) - parse pp_dpm_sclk for active clock (marked with *)
+            gpu_clock = "N/A"
+            sclk_path = f"/sys/class/drm/{card_id}/device/pp_dpm_sclk"
+            if os.path.exists(sclk_path):
+                with open(sclk_path) as f:
+                    for line in f:
+                        if '*' in line:
+                            # Extract MHz value (e.g., "0: 300Mhz *")
+                            match = re.search(r'(\d+)\s*Mhz', line, re.IGNORECASE)
+                            if match:
+                                gpu_clock = f"{match.group(1)}MHz"
+                            break
+
+            # Memory clock (MHz) - parse pp_dpm_mclk for active clock
+            mem_clock = "N/A"
+            mclk_path = f"/sys/class/drm/{card_id}/device/pp_dpm_mclk"
+            if os.path.exists(mclk_path):
+                with open(mclk_path) as f:
+                    for line in f:
+                        if '*' in line:
+                            match = re.search(r'(\d+)\s*Mhz', line, re.IGNORECASE)
+                            if match:
+                                mem_clock = f"{match.group(1)}MHz"
+                            break
+
+            # Fan speed (%) - calculate from fan1_input / fan1_max
+            fan_speed = "N/A"
+            fan_input_path = f"/sys/class/drm/{card_id}/device/hwmon/hwmon*/fan1_input"
+            fan_max_path = f"/sys/class/drm/{card_id}/device/hwmon/hwmon*/fan1_max"
+            fan_input_files = glob.glob(fan_input_path)
+            fan_max_files = glob.glob(fan_max_path)
+
+            if fan_input_files and fan_max_files:
+                try:
+                    with open(fan_input_files[0]) as f:
+                        fan_input = int(f.read().strip())
+                    with open(fan_max_files[0]) as f:
+                        fan_max = int(f.read().strip())
+                    if fan_max > 0:
+                        fan_percent = int((fan_input / fan_max) * 100)
+                        fan_speed = f"{fan_percent}%"
+                except (ValueError, ZeroDivisionError):
+                    pass
+
+            # Memory usage - try to get from sysfs (may not show application usage)
+            memory = "See server logs"
+            vram_used_path = f"/sys/class/drm/{card_id}/device/mem_info_vram_used"
+            vram_total_path = f"/sys/class/drm/{card_id}/device/mem_info_vram_total"
+            if os.path.exists(vram_used_path) and os.path.exists(vram_total_path):
+                try:
+                    with open(vram_used_path) as f:
+                        vram_used = int(f.read().strip())
+                    with open(vram_total_path) as f:
+                        vram_total = int(f.read().strip())
+                    if vram_total > 0:
+                        # Convert bytes to GiB
+                        vram_used_gib = vram_used / (1024**3)
+                        vram_total_gib = vram_total / (1024**3)
+                        memory = f"{vram_used_gib:.2f}Gi/{vram_total_gib:.2f}Gi"
+                except (ValueError, ZeroDivisionError):
+                    pass
 
             gpus.append({
                 "index": card_id,
@@ -65,7 +130,10 @@ def get_gpu_stats():
                 "temp": temp,
                 "usage": usage,
                 "power": power,
-                "memory": "See server logs"
+                "gpu_clock": gpu_clock,
+                "mem_clock": mem_clock,
+                "fan_speed": fan_speed,
+                "memory": memory
             })
         except Exception as e:
             logger.error(f"Error reading {card_id}: {e}")
