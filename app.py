@@ -150,7 +150,7 @@ def get_gpu_stats():
 def log_reader(process):
     """Read logs from the process stdout and stderr and add them to the buffer"""
     global log_buffer, last_log_id
-    
+
     def read_stream(stream, prefix):
         for line in iter(stream.readline, b''):
             try:
@@ -162,10 +162,44 @@ def log_reader(process):
                 logger.debug(f"Log: {log_entry}")
             except Exception as e:
                 logger.error(f"Error processing log line: {e}")
-    
+
     # Start threads to read stdout and stderr
     threading.Thread(target=read_stream, args=(process.stdout, "OUT"), daemon=True).start()
     threading.Thread(target=read_stream, args=(process.stderr, "ERR"), daemon=True).start()
+
+def stop_model_if_running():
+    """Stop the currently running model if there is one. Returns True if a model was stopped."""
+    global model_process
+
+    if model_process:
+        logger.debug("Stopping currently running model...")
+        try:
+            os.killpg(os.getpgid(model_process.pid), signal.SIGTERM)
+            logger.debug("Model process terminated")
+        except Exception as e:
+            logger.error(f"Error killing model process: {e}")
+            # Continue anyway - process might already be dead
+        finally:
+            model_process = None
+
+        # Clear Llama-Server Cache
+        try:
+            subprocess.run(["rm", "-rf", CACHE_DIR], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            logger.debug("Llama cache cleared")
+        except Exception as e:
+            logger.error(f"Error clearing cache: {e}")
+            # Continue anyway - model is already stopped
+
+        # Double-check: Kill any remaining `llama-server` processes
+        try:
+            subprocess.run(["pkill", "-f", "llama-server"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            logger.debug("Killed any remaining llama-server processes")
+        except Exception as e:
+            logger.error(f"Error killing remaining processes: {e}")
+            # Continue anyway - main process is already stopped
+
+        return True
+    return False
 
 @app.route("/")
 def index():
@@ -207,8 +241,11 @@ def get_logs():
 @app.route("/start", methods=["POST"])
 def start_server():
     global model_process
-    if model_process:
-        return jsonify({"status": "Model is already running!", "success": False})
+    # Stop any currently running model before starting a new one
+    was_running = model_process is not None
+    if was_running:
+        logger.info("Model already running, stopping it first...")
+        stop_model_if_running()
 
     try:
         # Debug all form data
@@ -317,7 +354,10 @@ def start_server():
             model_process = None
             return jsonify({"status": f"Error: {error_msg}", "success": False})
 
-        return jsonify({"status": f"Model '{model}' started on {host}:{port}", "success": True})
+        if was_running:
+            return jsonify({"status": f"Stopped previous model and started '{model}' on {host}:{port}", "success": True})
+        else:
+            return jsonify({"status": f"Model '{model}' started on {host}:{port}", "success": True})
 
     except Exception as e:
         logger.exception(f"Error starting model: {e}")
@@ -325,27 +365,19 @@ def start_server():
 
 @app.route("/stop", methods=["POST"])
 def stop_server():
-    global model_process
-
     logger.debug("Stopping model server...")
-    if model_process:
-        os.killpg(os.getpgid(model_process.pid), signal.SIGTERM)
-        model_process = None
-        logger.debug("Model process terminated")
+    stopped = stop_model_if_running()
 
-    # Clear Llama-Server Cache
-    try:
-        subprocess.run(["rm", "-rf", CACHE_DIR], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        logger.debug("Llama cache cleared")
-    except Exception as e:
-        logger.error(f"Error clearing cache: {e}")
-        return jsonify({"status": f"Error clearing cache: {str(e)}", "success": False})
-
-    # Double-check: Kill any remaining `llama-server` processes
-    subprocess.run(["pkill", "-f", "llama-server"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    logger.debug("Killed any remaining llama-server processes")
-
-    return jsonify({"status": "Model server fully stopped and cache cleared!", "success": True})
+    if stopped:
+        return jsonify({"status": "Model server fully stopped and cache cleared!", "success": True})
+    else:
+        # Check if there was an error or no model was running
+        if model_process:
+            # Model was running but error occurred during stop
+            return jsonify({"status": "Error stopping model server", "success": False})
+        else:
+            # No model was running
+            return jsonify({"status": "No model was running", "success": True})
 
 @app.route("/status")
 def status():
@@ -398,20 +430,8 @@ def get_settings():
 
 # Ensure the model process is killed when Flask exits
 def cleanup():
-    global model_process
     logger.info("Cleaning up before exit...")
-
-    if model_process:
-        os.killpg(os.getpgid(model_process.pid), signal.SIGTERM)
-        logger.info("Model process terminated")
-
-    # Clear Llama-Server Cache on Exit
-    subprocess.run(["rm", "-rf", CACHE_DIR], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    logger.info("Llama cache cleared")
-
-    # Kill any remaining `llama-server` processes
-    subprocess.run(["pkill", "-f", "llama-server"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    logger.info("Killed any remaining llama-server processes")
+    stop_model_if_running()
 
 atexit.register(cleanup)
 
