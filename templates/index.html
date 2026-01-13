@@ -113,6 +113,12 @@
                             <option value="false">Disabled</option>
                         </select>
                     </div>
+
+                    <div>
+                        <label class="block text-left mb-1">Extra Command-line Arguments</label>
+                        <input type="text" id="extra_args" name="extra_args" form="modelForm" value="--jinja --chat-template chatml" placeholder="--jinja --chat-template chatml" class="w-full bg-gray-700 text-white p-2 rounded mb-3">
+                        <p class="text-xs text-gray-400">Additional arguments passed directly to llama-server</p>
+                    </div>
                 </div>
             </div>
 
@@ -184,6 +190,7 @@
             settings.flash_attn = document.getElementById('flash_attn').value;
             settings.parallel = document.getElementById('parallel').value;
             settings.cont_batching = document.getElementById('cont_batching').value;
+            settings.extra_args = document.getElementById('extra_args').value;
 
             localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
             console.log('Settings saved to localStorage:', settings);
@@ -218,6 +225,7 @@
                 if (settings.flash_attn !== undefined) document.getElementById('flash_attn').value = settings.flash_attn;
                 if (settings.parallel !== undefined) document.getElementById('parallel').value = settings.parallel;
                 if (settings.cont_batching !== undefined) document.getElementById('cont_batching').value = settings.cont_batching;
+                if (settings.extra_args !== undefined) document.getElementById('extra_args').value = settings.extra_args;
 
                 console.log('Settings loaded from localStorage:', settings);
                 return true;
@@ -247,6 +255,7 @@
             settings.flash_attn = document.getElementById('flash_attn').value;
             settings.parallel = document.getElementById('parallel').value;
             settings.cont_batching = document.getElementById('cont_batching').value;
+            settings.extra_args = document.getElementById('extra_args').value;
 
             try {
                 const response = await fetch('/save_settings', {
@@ -295,7 +304,7 @@
             const inputs = [
                 'model', 'ngl', 'ctx_size', 'port', 'host',
                 'main_gpu', 'tensor_split', 'batch_size', 'ubatch_size',
-                'flash_attn', 'parallel', 'cont_batching'
+                'flash_attn', 'parallel', 'cont_batching', 'extra_args'
             ];
 
             inputs.forEach(id => {

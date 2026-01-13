@@ -273,6 +273,7 @@ def start_server():
         flash_attn = form_defaults.get("flash_attn", "on")
         parallel = form_defaults.get("parallel", "1")
         cont_batching = form_defaults.get("cont_batching", "true")
+        extra_args = form_defaults.get("extra_args", "")
 
         # Log the actual values being used
         logger.debug(f"Using model: {model}")
@@ -287,6 +288,7 @@ def start_server():
         logger.debug(f"Flash attention: {flash_attn}")
         logger.debug(f"Parallel: {parallel}")
         logger.debug(f"Continuous batching: {cont_batching}")
+        logger.debug(f"Extra args: {extra_args}")
 
         env = os.environ.copy()
 
@@ -303,7 +305,8 @@ def start_server():
 --host {host} \
 --parallel {parallel} \
 --slot-save-path {SLOTS_DIR} \
-{"--cont-batching" if cont_batching == "true" else ""}"""
+{"--cont-batching" if cont_batching == "true" else ""} \
+{extra_args if extra_args else ""}"""
         
         # Log the final command being executed
         logger.debug(f"Executing command: {command}")
@@ -397,7 +400,7 @@ def save_settings():
                 # Store model index as integer
                 SettingsHandler.save_setting("model_index", int(value))
             elif key in ["ngl", "ctx_size", "port", "host", "main_gpu", "tensor_split",
-                        "batch_size", "ubatch_size", "flash_attn", "parallel", "cont_batching"]:
+                        "batch_size", "ubatch_size", "flash_attn", "parallel", "cont_batching", "extra_args"]:
                 SettingsHandler.save_setting(key, value)
 
         return jsonify({"status": "Settings saved successfully", "success": True})

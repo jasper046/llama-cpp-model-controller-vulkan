@@ -26,7 +26,8 @@ class SettingsHandler:
         "ubatch_size": "128",
         "flash_attn": "on",
         "parallel": "1",
-        "cont_batching": "true"
+        "cont_batching": "true",
+        "extra_args": "--jinja --chat-template chatml"
     }
 
     # Settings file path
@@ -117,7 +118,8 @@ class SettingsHandler:
             'ubatch_size': 'ubatch_size',
             'flash_attn': 'flash_attn',
             'parallel': 'parallel',
-            'cont_batching': 'cont_batching'
+            'cont_batching': 'cont_batching',
+            'extra_args': 'extra_args'
         }
 
         for form_field, setting_key in field_mapping.items():

@@ -30,3 +30,6 @@ build/
 # OS specific files
 .DS_Store
 Thumbs.db
+
+# Claude Code documentation (auto-generated)
+CLAUDE.md
