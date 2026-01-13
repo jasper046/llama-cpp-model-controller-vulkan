@@ -10,8 +10,8 @@
     <div class="container mx-auto">
         <h1 class="text-3xl font-bold mb-6 text-center">Llama Model Controller</h1>
         
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <!-- Left Column: All Controls (1/3 width) -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <!-- Left Column: All Controls (1/4 width) -->
             <div class="md:col-span-1 space-y-4">
                 <!-- Model Selection -->
                 <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
@@ -122,8 +122,8 @@
                 </div>
             </div>
 
-            <!-- Right Column: GPU Stats & Server Logs (2/3 width) -->
-            <div class="md:col-span-2 space-y-4">
+            <!-- Right Column: GPU Stats & Server Logs (3/4 width) -->
+            <div class="md:col-span-3 space-y-4">
                 <!-- GPU Stats -->
                 <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
                     <h2 class="text-xl font-bold mb-2">GPU Usage (AMD Radeon)</h2>
@@ -145,7 +145,7 @@
                             </button>
                         </div>
                     </div>
-                    <div id="server-logs-container" class="bg-gray-900 rounded p-3 overflow-y-auto font-mono text-sm" style="height: 100vh;">
+                    <div id="server-logs-container" class="bg-gray-900 rounded p-3 overflow-y-auto font-mono text-sm" style="height: 80vh;">
                         <pre id="server-logs" class="whitespace-pre-wrap"></pre>
                     </div>
                     <div class="flex mt-2 text-xs">
