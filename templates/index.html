@@ -326,13 +326,25 @@
         }
 
         async function updateGPUStats() {
-            let response = await fetch("/gpu");
-            let gpus = await response.json();
             let gpuContainer = document.getElementById("gpu-stats");
-            gpuContainer.innerHTML = "";
+            let gpus;
 
-            if (gpus.length === 0 || gpus[0].error) {
-                gpuContainer.innerHTML = `<p class="text-red-400">Error: ${gpus[0]?.error || "No data"}</p>`;
+            try {
+                let response = await fetch("/gpu");
+                if (!response.ok) {
+                    gpuContainer.innerHTML = `<p class="text-red-400">Error: HTTP ${response.status} - Failed to fetch GPU stats</p>`;
+                    return;
+                }
+
+                gpus = await response.json();
+                gpuContainer.innerHTML = "";
+
+                if (gpus.length === 0 || gpus[0].error) {
+                    gpuContainer.innerHTML = `<p class="text-red-400">Error: ${gpus[0]?.error || "No data"}</p>`;
+                    return;
+                }
+            } catch (error) {
+                gpuContainer.innerHTML = `<p class="text-red-400">Error: ${error.message || "Failed to load GPU stats"}</p>`;
                 return;
             }
 

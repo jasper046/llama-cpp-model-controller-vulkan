@@ -136,6 +136,22 @@ def get_gpu_stats():
                 "fan_speed": fan_speed,
                 "memory": memory
             })
+        except PermissionError as e:
+            logger.error(f"Permission denied reading {card_id}: {e}")
+            gpus.append({
+                "index": card_id,
+                "name": card_name,
+                "vulkan_id": vulkan_id,
+                "error": f"Permission denied accessing GPU sysfs files"
+            })
+        except FileNotFoundError as e:
+            logger.error(f"GPU sysfs files not found for {card_id}: {e}")
+            gpus.append({
+                "index": card_id,
+                "name": card_name,
+                "vulkan_id": vulkan_id,
+                "error": f"GPU not found or drivers not loaded"
+            })
         except Exception as e:
             logger.error(f"Error reading {card_id}: {e}")
             gpus.append({
@@ -223,7 +239,11 @@ def index():
 
 @app.route("/gpu")
 def gpu_stats():
-    return jsonify(get_gpu_stats())
+    try:
+        return jsonify(get_gpu_stats())
+    except Exception as e:
+        logger.error(f"Error in /gpu endpoint: {e}")
+        return jsonify([{"error": f"Failed to retrieve GPU stats: {str(e)}"}]), 500
 
 @app.route("/logs")
 def get_logs():
