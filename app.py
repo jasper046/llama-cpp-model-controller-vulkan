@@ -44,48 +44,63 @@ def get_gpu_stats():
             temp_files = glob.glob(temp_path)
             temp = "N/A"
             if temp_files:
-                with open(temp_files[0]) as f:
-                    temp = f"{int(f.read().strip()) // 1000}°C"
+                try:
+                    with open(temp_files[0]) as f:
+                        temp = f"{int(f.read().strip()) // 1000}°C"
+                except (ValueError, OSError):
+                    pass
 
             # Power usage
             power_path = f"/sys/class/drm/{card_id}/device/hwmon/hwmon*/power1_average"
             power_files = glob.glob(power_path)
             power = "N/A"
             if power_files:
-                with open(power_files[0]) as f:
-                    power = f"{int(f.read().strip()) // 1000000}W"
+                try:
+                    with open(power_files[0]) as f:
+                        power = f"{int(f.read().strip()) // 1000000}W"
+                except (ValueError, OSError):
+                    pass
 
             # GPU usage percentage
             busy_path = f"/sys/class/drm/{card_id}/device/gpu_busy_percent"
             usage = "N/A"
             if os.path.exists(busy_path):
-                with open(busy_path) as f:
-                    usage = f"{f.read().strip()}%"
+                try:
+                    with open(busy_path) as f:
+                        usage = f"{f.read().strip()}%"
+                except (ValueError, OSError):
+                    pass
 
             # GPU clock (MHz) - parse pp_dpm_sclk for active clock (marked with *)
             gpu_clock = "N/A"
             sclk_path = f"/sys/class/drm/{card_id}/device/pp_dpm_sclk"
             if os.path.exists(sclk_path):
-                with open(sclk_path) as f:
-                    for line in f:
-                        if '*' in line:
-                            # Extract MHz value (e.g., "0: 300Mhz *")
-                            match = re.search(r'(\d+)\s*Mhz', line, re.IGNORECASE)
-                            if match:
-                                gpu_clock = f"{match.group(1)}MHz"
-                            break
+                try:
+                    with open(sclk_path) as f:
+                        for line in f:
+                            if '*' in line:
+                                # Extract MHz value (e.g., "0: 300Mhz *")
+                                match = re.search(r'(\d+)\s*Mhz', line, re.IGNORECASE)
+                                if match:
+                                    gpu_clock = f"{match.group(1)}MHz"
+                                break
+                except (ValueError, OSError):
+                    pass
 
             # Memory clock (MHz) - parse pp_dpm_mclk for active clock
             mem_clock = "N/A"
             mclk_path = f"/sys/class/drm/{card_id}/device/pp_dpm_mclk"
             if os.path.exists(mclk_path):
-                with open(mclk_path) as f:
-                    for line in f:
-                        if '*' in line:
-                            match = re.search(r'(\d+)\s*Mhz', line, re.IGNORECASE)
-                            if match:
-                                mem_clock = f"{match.group(1)}MHz"
-                            break
+                try:
+                    with open(mclk_path) as f:
+                        for line in f:
+                            if '*' in line:
+                                match = re.search(r'(\d+)\s*Mhz', line, re.IGNORECASE)
+                                if match:
+                                    mem_clock = f"{match.group(1)}MHz"
+                                break
+                except (ValueError, OSError):
+                    pass
 
             # Fan speed (%) - calculate from fan1_input / fan1_max
             fan_speed = "N/A"
@@ -103,7 +118,7 @@ def get_gpu_stats():
                     if fan_max > 0:
                         fan_percent = int((fan_input / fan_max) * 100)
                         fan_speed = f"{fan_percent}%"
-                except (ValueError, ZeroDivisionError):
+                except (ValueError, ZeroDivisionError, OSError):
                     pass
 
             # Memory usage - try to get from sysfs (may not show application usage)
