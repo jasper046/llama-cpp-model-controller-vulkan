@@ -12,6 +12,7 @@ from collections import deque
 from flask import Flask, render_template, request, jsonify
 from config import HOME_DIR, LLAMA_CPP_PATH, MODEL_DIR, CACHE_DIR, SLOTS_DIR, GPU_CARDS
 from settings_handler import SettingsHandler
+from gpu_monitor import gpu_monitor
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG,
@@ -33,150 +34,6 @@ def get_models():
         return []
     return [f for f in os.listdir(MODEL_DIR) if f.endswith(".gguf")]
 
-def get_gpu_stats():
-    """Get AMD GPU stats from sysfs"""
-    gpus = []
-
-    for card_id, card_name, vulkan_id in GPU_CARDS:
-        try:
-            # Temperature
-            temp_path = f"/sys/class/drm/{card_id}/device/hwmon/hwmon*/temp1_input"
-            temp_files = glob.glob(temp_path)
-            temp = "N/A"
-            if temp_files:
-                try:
-                    with open(temp_files[0]) as f:
-                        temp = f"{int(f.read().strip()) // 1000}°C"
-                except (ValueError, OSError):
-                    pass
-
-            # Power usage
-            power_path = f"/sys/class/drm/{card_id}/device/hwmon/hwmon*/power1_average"
-            power_files = glob.glob(power_path)
-            power = "N/A"
-            if power_files:
-                try:
-                    with open(power_files[0]) as f:
-                        power = f"{int(f.read().strip()) // 1000000}W"
-                except (ValueError, OSError):
-                    pass
-
-            # GPU usage percentage
-            busy_path = f"/sys/class/drm/{card_id}/device/gpu_busy_percent"
-            usage = "N/A"
-            if os.path.exists(busy_path):
-                try:
-                    with open(busy_path) as f:
-                        usage = f"{f.read().strip()}%"
-                except (ValueError, OSError):
-                    pass
-
-            # GPU clock (MHz) - parse pp_dpm_sclk for active clock (marked with *)
-            gpu_clock = "N/A"
-            sclk_path = f"/sys/class/drm/{card_id}/device/pp_dpm_sclk"
-            if os.path.exists(sclk_path):
-                try:
-                    with open(sclk_path) as f:
-                        for line in f:
-                            if '*' in line:
-                                # Extract MHz value (e.g., "0: 300Mhz *")
-                                match = re.search(r'(\d+)\s*Mhz', line, re.IGNORECASE)
-                                if match:
-                                    gpu_clock = f"{match.group(1)}MHz"
-                                break
-                except (ValueError, OSError):
-                    pass
-
-            # Memory clock (MHz) - parse pp_dpm_mclk for active clock
-            mem_clock = "N/A"
-            mclk_path = f"/sys/class/drm/{card_id}/device/pp_dpm_mclk"
-            if os.path.exists(mclk_path):
-                try:
-                    with open(mclk_path) as f:
-                        for line in f:
-                            if '*' in line:
-                                match = re.search(r'(\d+)\s*Mhz', line, re.IGNORECASE)
-                                if match:
-                                    mem_clock = f"{match.group(1)}MHz"
-                                break
-                except (ValueError, OSError):
-                    pass
-
-            # Fan speed (%) - calculate from fan1_input / fan1_max
-            fan_speed = "N/A"
-            fan_input_path = f"/sys/class/drm/{card_id}/device/hwmon/hwmon*/fan1_input"
-            fan_max_path = f"/sys/class/drm/{card_id}/device/hwmon/hwmon*/fan1_max"
-            fan_input_files = glob.glob(fan_input_path)
-            fan_max_files = glob.glob(fan_max_path)
-
-            if fan_input_files and fan_max_files:
-                try:
-                    with open(fan_input_files[0]) as f:
-                        fan_input = int(f.read().strip())
-                    with open(fan_max_files[0]) as f:
-                        fan_max = int(f.read().strip())
-                    if fan_max > 0:
-                        fan_percent = int((fan_input / fan_max) * 100)
-                        fan_speed = f"{fan_percent}%"
-                except (ValueError, ZeroDivisionError, OSError):
-                    pass
-
-            # Memory usage - try to get from sysfs (may not show application usage)
-            memory = "See server logs"
-            vram_used_path = f"/sys/class/drm/{card_id}/device/mem_info_vram_used"
-            vram_total_path = f"/sys/class/drm/{card_id}/device/mem_info_vram_total"
-            if os.path.exists(vram_used_path) and os.path.exists(vram_total_path):
-                try:
-                    with open(vram_used_path) as f:
-                        vram_used = int(f.read().strip())
-                    with open(vram_total_path) as f:
-                        vram_total = int(f.read().strip())
-                    if vram_total > 0:
-                        # Convert bytes to GiB
-                        vram_used_gib = vram_used / (1024**3)
-                        vram_total_gib = vram_total / (1024**3)
-                        memory = f"{vram_used_gib:.2f}Gi/{vram_total_gib:.2f}Gi"
-                except (ValueError, ZeroDivisionError):
-                    pass
-
-            gpus.append({
-                "index": card_id,
-                "name": card_name,
-                "vulkan_id": vulkan_id,
-                "temp": temp,
-                "usage": usage,
-                "power": power,
-                "gpu_clock": gpu_clock,
-                "mem_clock": mem_clock,
-                "fan_speed": fan_speed,
-                "memory": memory
-            })
-        except PermissionError as e:
-            logger.error(f"Permission denied reading {card_id}: {e}")
-            gpus.append({
-                "index": card_id,
-                "name": card_name,
-                "vulkan_id": vulkan_id,
-                "error": f"Permission denied accessing GPU sysfs files"
-            })
-        except FileNotFoundError as e:
-            logger.error(f"GPU sysfs files not found for {card_id}: {e}")
-            gpus.append({
-                "index": card_id,
-                "name": card_name,
-                "vulkan_id": vulkan_id,
-                "error": f"GPU not found or drivers not loaded"
-            })
-        except Exception as e:
-            logger.error(f"Error reading {card_id}: {e}")
-            gpus.append({
-                "index": card_id,
-                "name": card_name,
-                "vulkan_id": vulkan_id,
-                "error": str(e)
-            })
-
-    return gpus
 
 def log_reader(process):
     """Read logs from the process stdout and stderr and add them to the buffer"""
@@ -254,11 +111,33 @@ def index():
 
 @app.route("/gpu")
 def gpu_stats():
+    """Return cached GPU stats from background monitor"""
     try:
-        return jsonify(get_gpu_stats())
+        stats = gpu_monitor.get_stats()
+        # Remove internal fields before sending to frontend
+        clean_stats = []
+        for gpu in stats:
+            clean_gpu = {k: v for k, v in gpu.items() if k not in ["last_update", "error"]}
+            clean_stats.append(clean_gpu)
+        return jsonify(clean_stats)
     except Exception as e:
         logger.error(f"Error in /gpu endpoint: {e}")
-        return jsonify([{"error": f"Failed to retrieve GPU stats: {str(e)}"}]), 500
+        # Return default stats if cache fails
+        default_stats = []
+        for card_id, card_name, vulkan_id in GPU_CARDS:
+            default_stats.append({
+                "index": card_id,
+                "name": card_name,
+                "vulkan_id": vulkan_id,
+                "temp": "N/A",
+                "usage": "0%",
+                "power": "N/A",
+                "gpu_clock": "N/A",
+                "mem_clock": "N/A",
+                "fan_speed": "N/A",
+                "memory": "0.00Gi/0.00Gi"
+            })
+        return jsonify(default_stats)
 
 @app.route("/logs")
 def get_logs():
@@ -470,6 +349,11 @@ def get_settings():
 def cleanup():
     logger.info("Cleaning up before exit...")
     stop_model_if_running()
+    # Stop GPU monitor if it's running
+    try:
+        gpu_monitor.stop()
+    except Exception as e:
+        logger.error(f"Error stopping GPU monitor: {e}")
 
 atexit.register(cleanup)
 
@@ -498,5 +382,12 @@ if __name__ == "__main__":
     if not os.path.exists(LLAMA_CPP_PATH):
         logger.error(f"llama-server executable not found at {LLAMA_CPP_PATH}")
         logger.error("Please compile llama.cpp or update the LLAMA_CPP_PATH variable")
-    
+
+    # Start GPU monitor in background
+    logger.info("Starting GPU monitor...")
+    gpu_monitor.start()
+
+    # Register cleanup for GPU monitor
+    atexit.register(gpu_monitor.stop)
+
     app.run(host="0.0.0.0", port=5000, debug=True)

@@ -61,6 +61,53 @@ Key features include real-time GPU monitoring with temperature, power, and usage
 - llama.cpp compiled with Vulkan support
 - GGUF format models
 
+### Determining GPU PCIe Slots and Card IDs
+
+Before configuring the controller, you need to identify your GPU PCIe slots and corresponding card IDs:
+
+```bash
+# 1. List all PCIe devices and find your GPUs
+lspci | grep -i vga
+
+# Example output:
+# 65:00.0 VGA compatible controller: Advanced Micro Devices, Inc. [AMD/ATI] Ellesmere [Radeon RX 470/480/570/570X/580/580X/590] (rev cf)
+# b5:00.0 VGA compatible controller: Advanced Micro Devices, Inc. [AMD/ATI] Navi 23 [Radeon RX 6600/6600 XT/6600M] (rev c7)
+
+# 2. Check which card IDs correspond to which PCIe slots
+ls -la /sys/class/drm/card*
+
+# Example output showing card1 and card2 exist:
+# lrwxrwxrwx 1 root root 0 Jan 15 07:03 /sys/class/drm/card1 -> ../../devices/pci0000:00/0000:00:08.1/0000:03:00.0/drm/card1
+# lrwxrwxrwx 1 root root 0 Jan 15 07:03 /sys/class/drm/card2 -> ../../devices/pci0000:00/0000:00:08.1/0000:03:00.0/drm/card2
+
+# 3. Match card IDs to PCIe slots (optional but helpful for debugging)
+for card in /sys/class/drm/card*; do
+    if [ -d "$card/device" ]; then
+        echo "Card: $(basename $card)"
+        cat "$card/device/uevent" | grep PCI_SLOT_NAME
+    fi
+done
+
+# Example output:
+# Card: card1
+# PCI_SLOT_NAME=0000:65:00.0
+# Card: card2
+# PCI_SLOT_NAME=0000:b5:00.0
+
+# 4. Update config.py with your findings
+# Edit config.py and update GPU_CARDS:
+# GPU_CARDS = [
+#     ("card1", "RX 470", 1),    # card1 = RX 470 = Vulkan device 1
+#     ("card2", "RX 6600", 0)    # card2 = RX 6600 = Vulkan device 0
+# ]
+```
+
+**Important Notes:**
+- Card IDs (card0, card1, card2, etc.) may vary between systems
+- The order in `/sys/class/drm/` determines the card ID, not the PCIe slot
+- Vulkan device IDs are assigned by llama.cpp and may differ from card IDs
+- Always verify with `llama-cli --list-devices` after determining card IDs
+
 ### Verifying Vulkan Support
 
 Before using this controller, verify your Vulkan installation:
@@ -213,6 +260,36 @@ app.run(host="0.0.0.0", port=5000, debug=True)
 ### Adding Model Presets
 
 You can create preset configurations for each model by modifying the HTML template.
+
+## 🧪 Testing
+
+The project includes test scripts to verify the GPU monitoring architecture:
+
+```bash
+# Navigate to the testscripts directory
+cd testscripts
+
+# Test 1: GPU monitor with caching architecture
+python3 test_gpu_monitor.py
+
+# Test 2: Full separated architecture (backend collector + monitor)
+python3 test_separated_architecture.py
+```
+
+**What the tests verify:**
+1. **Backend Collector** (`gpu_collector.py`): Pure data collection from sysfs
+2. **GPU Monitor** (`gpu_monitor.py`): Caching and background service
+3. **Integration**: Full pipeline from collection to caching to serving
+
+**Architecture Overview:**
+- `gpu_collector.py`: Backend - pure data collection, no caching
+- `gpu_monitor.py`: Middleware - caching, background updates, thread safety
+- `app.py`: Frontend - serves cached data via Flask API
+
+This separation ensures:
+- Frontend requests are fast (cached data)
+- Backend errors don't break the UI (default values provided)
+- Heavy operations are decoupled from serving
 
 ## 🔧 Troubleshooting
 
