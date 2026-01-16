@@ -333,7 +333,7 @@ def start_server():
 
         port = form_defaults.get("port", "4000")
         host = form_defaults.get("host", "0.0.0.0")
-        ngl = form_defaults.get("ngl", "99")
+        ngl = form_defaults.get("ngl", "999")  # All layers to GPU
         ctx_size = form_defaults.get("ctx_size", "16384")
         batch_size = form_defaults.get("batch_size", "512")
         ubatch_size = form_defaults.get("ubatch_size", "128")
@@ -342,7 +342,7 @@ def start_server():
         flash_attn = form_defaults.get("flash_attn", "on")
         parallel = form_defaults.get("parallel", "1")
         cont_batching = form_defaults.get("cont_batching", "true")
-        extra_args = form_defaults.get("extra_args", "")
+        extra_args = form_defaults.get("extra_args", "--jinja --chat-template chatml --gpu-sampling -ctk q8_0")
 
         # Log the actual values being used
         logger.debug(f"Using model: {model}")
