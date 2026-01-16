@@ -8,6 +8,7 @@ import time
 import logging
 from typing import List, Dict, Any
 from gpu_collector import collect_gpu_stats, get_default_gpu_stats
+from process_monitor import diagnose_gpu_crash, check_d_state_processes
 
 logger = logging.getLogger(__name__)
 
@@ -76,9 +77,20 @@ class GPUMonitor:
         """Background thread loop for updating GPU stats"""
         logger.info(f"GPU monitor started with {self.update_interval}s update interval")
 
+        # Track last GPU crash check time
+        last_crash_check = 0
+        crash_check_interval = 30  # Check for GPU crashes every 30 seconds
+
         while not self._stop_event.is_set():
             try:
                 self._update_stats()
+
+                # Periodically check for GPU crashes
+                current_time = time.time()
+                if current_time - last_crash_check > crash_check_interval:
+                    self._check_gpu_crash()
+                    last_crash_check = current_time
+
             except Exception as e:
                 logger.error(f"Error in GPU monitor loop: {e}")
 
@@ -89,6 +101,24 @@ class GPUMonitor:
                 time.sleep(0.1)
 
         logger.info("GPU monitor stopped")
+
+    def _check_gpu_crash(self):
+        """Check for GPU crash indicators and log warnings"""
+        try:
+            # Check for D state processes
+            has_d_state, d_state_pids = check_d_state_processes("llama-server")
+            if has_d_state:
+                logger.critical(
+                    f"GPU CRASH DETECTED: {len(d_state_pids)} llama-server processes in D state: {d_state_pids}. "
+                    f"These are unkillable and indicate GPU memory crash. Hard reset required."
+                )
+
+                # Run full diagnosis for more details
+                diagnosis = diagnose_gpu_crash()
+                logger.critical(f"GPU crash diagnosis details: {diagnosis}")
+
+        except Exception as e:
+            logger.error(f"Error checking GPU crash: {e}")
 
     def start(self):
         """Start the background GPU monitoring thread"""

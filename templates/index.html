@@ -126,7 +126,14 @@
             <div class="md:col-span-3 space-y-4">
                 <!-- GPU Stats -->
                 <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
-                    <h2 class="text-xl font-bold mb-2">GPU Usage (AMD Radeon)</h2>
+                    <div class="flex justify-between items-center mb-2">
+                        <h2 class="text-xl font-bold">GPU Usage (AMD Radeon)</h2>
+                        <div>
+                            <button id="run-gpu-diagnosis" class="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1 rounded text-sm">
+                                Run GPU Diagnosis
+                            </button>
+                        </div>
+                    </div>
                     <div id="gpu-stats" class="text-sm space-y-4">
                         Loading...
                     </div>
@@ -328,6 +335,7 @@
         async function updateGPUStats() {
             let gpuContainer = document.getElementById("gpu-stats");
             let gpus;
+            let healthInfo;
 
             try {
                 let response = await fetch("/gpu");
@@ -336,7 +344,9 @@
                     return;
                 }
 
-                gpus = await response.json();
+                const data = await response.json();
+                gpus = data.gpus || [];
+                healthInfo = data.health || {};
                 gpuContainer.innerHTML = "";
 
                 if (gpus.length === 0 || gpus[0].error) {
@@ -346,6 +356,33 @@
             } catch (error) {
                 gpuContainer.innerHTML = `<p class="text-red-400">Error: ${error.message || "Failed to load GPU stats"}</p>`;
                 return;
+            }
+
+            // Display GPU health warning/error banner if needed
+            if (healthInfo.severity === "critical" || healthInfo.severity === "warning") {
+                const severityClass = healthInfo.severity === "critical" ? "bg-red-900 border-red-700" : "bg-yellow-900 border-yellow-700";
+                const severityIcon = healthInfo.severity === "critical" ? "🔴" : "⚠️";
+                const severityText = healthInfo.severity === "critical" ? "CRITICAL" : "WARNING";
+
+                let healthHtml = `
+                    <div class="${severityClass} border-l-4 p-3 mb-4 rounded-r">
+                        <div class="flex items-center">
+                            <span class="text-xl mr-2">${severityIcon}</span>
+                            <span class="font-bold">GPU ${severityText}:</span>
+                        </div>
+                        <p class="mt-1 text-sm">${healthInfo.recommendation}</p>
+                `;
+
+                if (healthInfo.has_d_state && healthInfo.d_state_pids.length > 0) {
+                    healthHtml += `<p class="mt-1 text-sm"><strong>D State Processes:</strong> ${healthInfo.d_state_pids.join(", ")}</p>`;
+                }
+
+                if (healthInfo.gpu_sysfs_errors && healthInfo.gpu_sysfs_errors.length > 0) {
+                    healthHtml += `<p class="mt-1 text-sm"><strong>Sysfs Errors:</strong> ${healthInfo.gpu_sysfs_errors.join("; ")}</p>`;
+                }
+
+                healthHtml += `</div>`;
+                gpuContainer.innerHTML += healthHtml;
             }
 
             gpus.forEach(gpu => {
@@ -369,9 +406,15 @@
                     }
                 }
 
+                // Determine if this GPU has errors
+                const hasError = gpu.error || (gpu.temp === "N/A" && gpu.usage === "0%" && gpu.power === "N/A");
+                const errorClass = hasError ? "border-red-500 border-l-4" : "";
+                const errorIcon = hasError ? "🔴 " : "";
+
                 gpuContainer.innerHTML += `
-                    <div class="p-3 bg-gray-700 rounded">
-                        <p class="font-bold text-lg">${gpu.name} (card: ${gpu.index}, Vulkan: ${gpu.vulkan_id})</p>
+                    <div class="p-3 bg-gray-700 rounded ${errorClass}">
+                        <p class="font-bold text-lg">${errorIcon}${gpu.name} (card: ${gpu.index}, Vulkan: ${gpu.vulkan_id})</p>
+                        ${hasError ? `<p class="text-red-400 text-sm mt-1">${gpu.error || "GPU stats unavailable"}</p>` : ""}
 
                         <!-- Other Stats Grid -->
                         <div class="grid grid-cols-2 gap-2 mt-3">
@@ -499,6 +542,38 @@
             let result = await response.json();
             document.getElementById("message").innerText = result.status;
             updateStatus();
+        });
+
+        // GPU Diagnosis button
+        document.getElementById("run-gpu-diagnosis")?.addEventListener("click", async () => {
+            const button = document.getElementById("run-gpu-diagnosis");
+            const originalText = button.textContent;
+            button.textContent = "Running...";
+            button.disabled = true;
+
+            try {
+                const response = await fetch("/diagnose_gpu");
+                const result = await response.json();
+
+                if (result.success) {
+                    const diagnosis = result.diagnosis;
+                    alert(`GPU Diagnosis Results:\n\n` +
+                          `Severity: ${diagnosis.severity.toUpperCase()}\n` +
+                          `D State Processes: ${diagnosis.d_state_processes ? diagnosis.d_state_pids.join(", ") : "None"}\n` +
+                          `GPU Sysfs Healthy: ${diagnosis.gpu_sysfs_healthy ? "Yes" : "No"}\n` +
+                          `Journalctl Errors: ${diagnosis.journalctl_errors ? "Yes" : "No"}\n\n` +
+                          `Recommendation: ${diagnosis.recommendation}`);
+                } else {
+                    alert(`GPU Diagnosis Failed: ${result.status}`);
+                }
+            } catch (error) {
+                alert(`Error running GPU diagnosis: ${error.message}`);
+            } finally {
+                button.textContent = originalText;
+                button.disabled = false;
+                // Refresh GPU stats to show updated health info
+                updateGPUStats();
+            }
         });
 
         // Add event listeners for the log controls and settings

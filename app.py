@@ -13,6 +13,7 @@ from flask import Flask, render_template, request, jsonify
 from config import HOME_DIR, LLAMA_CPP_PATH, MODEL_DIR, CACHE_DIR, SLOTS_DIR, GPU_CARDS
 from settings_handler import SettingsHandler
 from gpu_monitor import gpu_monitor
+from process_monitor import diagnose_gpu_crash, check_d_state_processes
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG,
@@ -60,40 +61,66 @@ def stop_model_if_running():
     global model_process
     killed_any = False
 
+    # Check for D state processes before attempting to kill
+    has_d_state, d_state_pids = check_d_state_processes("llama-server")
+    if has_d_state:
+        logger.critical(
+            f"Found {len(d_state_pids)} llama-server processes in D (uninterruptible sleep) state: {d_state_pids}. "
+            f"These processes cannot be killed and indicate GPU memory crash. "
+            f"Recommended action: Hard system reset required."
+        )
+
+        # Run comprehensive diagnosis
+        diagnosis = diagnose_gpu_crash()
+        logger.critical(f"GPU crash diagnosis: {diagnosis}")
+
+        # Still try cleanup, but warn it likely won't work
+        logger.warning("Attempting cleanup despite D state processes (likely to fail)...")
+
     # 1. Stop the main model process if we have it
     if model_process and model_process.poll() is None:
         logger.info("Stopping model process (PID: %s)...", model_process.pid)
 
-        # Try SIGTERM first (graceful)
-        model_process.terminate()
+        # Check if this specific PID is in D state
+        pid_str = str(model_process.pid)
+        if has_d_state and pid_str in d_state_pids:
+            logger.critical(f"Main model process {pid_str} is in D state - cannot be killed!")
+            # Skip kill attempts for D state process
+        else:
+            # Try SIGTERM first (graceful)
+            model_process.terminate()
 
-        # Wait with timeout
-        try:
-            model_process.wait(timeout=10)
-            logger.info("Model process stopped gracefully")
-            killed_any = True
-        except subprocess.TimeoutExpired:
-            logger.warning("Model process didn't stop gracefully, sending SIGKILL...")
-            model_process.kill()  # SIGKILL
-
+            # Wait with timeout
             try:
-                model_process.wait(timeout=5)
-                logger.info("Model process killed with SIGKILL")
+                model_process.wait(timeout=10)
+                logger.info("Model process stopped gracefully")
                 killed_any = True
             except subprocess.TimeoutExpired:
-                logger.error("Model process won't die! PID: %s", model_process.pid)
-                # Process might be in D state
+                logger.warning("Model process didn't stop gracefully, sending SIGKILL...")
+                model_process.kill()  # SIGKILL
+
+                try:
+                    model_process.wait(timeout=5)
+                    logger.info("Model process killed with SIGKILL")
+                    killed_any = True
+                except subprocess.TimeoutExpired:
+                    logger.error("Model process won't die! PID: %s", model_process.pid)
+                    # Process might be in D state
 
     # 2. Kill ALL llama-server processes (cleanup any orphans)
     logger.info("Cleaning up all llama-server processes...")
 
-    # First try pkill -f (matches command line)
-    try:
-        subprocess.run(["pkill", "-f", "llama-server"],
-                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
-        time.sleep(2)
-    except:
-        pass
+    # Skip pkill if we have D state processes (won't work anyway)
+    if not has_d_state:
+        # First try pkill -f (matches command line)
+        try:
+            subprocess.run(["pkill", "-f", "llama-server"],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+            time.sleep(2)
+        except:
+            pass
+    else:
+        logger.warning("Skipping pkill due to D state processes")
 
     # Check if any remain
     result = subprocess.run(["pgrep", "-f", "llama-server"],
@@ -101,28 +128,54 @@ def stop_model_if_running():
 
     if result.returncode == 0:  # Processes still exist
         pids = result.stdout.strip().split()
-        logger.warning(f"llama-server processes still running: {pids}")
 
-        # Try SIGKILL on each
-        for pid in pids:
-            try:
-                os.kill(int(pid), signal.SIGKILL)
-                logger.info(f"Sent SIGKILL to PID {pid}")
-            except:
-                pass
+        # Filter out D state PIDs we already know about
+        non_d_state_pids = [pid for pid in pids if pid not in d_state_pids] if has_d_state else pids
 
-        time.sleep(2)
+        if non_d_state_pids:
+            logger.warning(f"llama-server processes still running: {non_d_state_pids}")
+
+            # Try SIGKILL on each non-D state process
+            for pid in non_d_state_pids:
+                try:
+                    os.kill(int(pid), signal.SIGKILL)
+                    logger.info(f"Sent SIGKILL to PID {pid}")
+                except:
+                    pass
+
+            time.sleep(2)
+
+        # Report D state processes
+        if has_d_state:
+            d_state_in_list = [pid for pid in d_state_pids if pid in pids]
+            if d_state_in_list:
+                logger.critical(
+                    f"D state processes still present after cleanup attempts: {d_state_in_list}. "
+                    f"These are unkillable and indicate GPU memory crash."
+                )
 
         # Final check
         result = subprocess.run(["pgrep", "-f", "llama-server"],
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
         if result.returncode == 0:
-            pids = result.stdout.decode().strip().split()
-            logger.error(f"llama-server processes STILL running: {pids}")
-            logger.error("Processes may be in D state (unkillable)")
+            remaining_pids = result.stdout.decode().strip().split()
+
+            # Check if remaining are D state
+            if has_d_state:
+                remaining_d_state = [pid for pid in remaining_pids if pid in d_state_pids]
+                if remaining_d_state:
+                    logger.critical(
+                        f"D state processes persist: {remaining_d_state}. "
+                        f"GPU memory crash confirmed. Hard reset required."
+                    )
+                else:
+                    logger.error(f"Non-D state processes still running: {remaining_pids}")
+            else:
+                logger.error(f"llama-server processes STILL running: {remaining_pids}")
+                logger.error("Processes may be in D state (unkillable)")
         else:
-            logger.info("All llama-server processes cleaned up")
+            logger.info("All killable llama-server processes cleaned up")
             killed_any = True
     else:
         logger.info("No llama-server processes running")
@@ -163,15 +216,51 @@ def index():
 
 @app.route("/gpu")
 def gpu_stats():
-    """Return cached GPU stats from background monitor"""
+    """Return cached GPU stats from background monitor with health info"""
     try:
         stats = gpu_monitor.get_stats()
-        # Remove internal fields before sending to frontend
+
+        # Get GPU health diagnosis
+        health_info = {}
+        try:
+            diagnosis = diagnose_gpu_crash()
+            health_info = {
+                "has_d_state": diagnosis["d_state_processes"],
+                "d_state_pids": diagnosis["d_state_pids"],
+                "gpu_sysfs_healthy": diagnosis["gpu_sysfs_healthy"],
+                "gpu_sysfs_errors": diagnosis["gpu_sysfs_errors"],
+                "journalctl_errors": diagnosis["journalctl_errors"],
+                "severity": diagnosis["severity"],
+                "recommendation": diagnosis["recommendation"]
+            }
+        except Exception as e:
+            logger.error(f"Error getting GPU health info: {e}")
+            health_info = {
+                "has_d_state": False,
+                "d_state_pids": [],
+                "gpu_sysfs_healthy": True,
+                "gpu_sysfs_errors": [],
+                "journalctl_errors": False,
+                "severity": "info",
+                "recommendation": "Health check failed"
+            }
+
+        # Prepare stats with health info
         clean_stats = []
         for gpu in stats:
-            clean_gpu = {k: v for k, v in gpu.items() if k not in ["last_update", "error"]}
+            clean_gpu = {k: v for k, v in gpu.items() if k not in ["last_update"]}
+
+            # Include error field if present
+            if "error" in gpu:
+                clean_gpu["error"] = gpu["error"]
+
             clean_stats.append(clean_gpu)
-        return jsonify(clean_stats)
+
+        return jsonify({
+            "gpus": clean_stats,
+            "health": health_info,
+            "timestamp": time.time()
+        })
     except Exception as e:
         logger.error(f"Error in /gpu endpoint: {e}")
         # Return default stats if cache fails
@@ -187,9 +276,23 @@ def gpu_stats():
                 "gpu_clock": "N/A",
                 "mem_clock": "N/A",
                 "fan_speed": "N/A",
-                "memory": "0.00Gi/0.00Gi"
+                "memory": "0.00Gi/0.00Gi",
+                "error": str(e)
             })
-        return jsonify(default_stats)
+
+        return jsonify({
+            "gpus": default_stats,
+            "health": {
+                "has_d_state": False,
+                "d_state_pids": [],
+                "gpu_sysfs_healthy": False,
+                "gpu_sysfs_errors": [str(e)],
+                "journalctl_errors": False,
+                "severity": "warning",
+                "recommendation": f"GPU stats collection failed: {e}"
+            },
+            "timestamp": time.time()
+        })
 
 @app.route("/logs")
 def get_logs():
@@ -396,6 +499,25 @@ def get_settings():
     except Exception as e:
         logger.exception(f"Error getting settings: {e}")
         return jsonify({"status": f"Error: {str(e)}", "success": False})
+
+
+@app.route("/diagnose_gpu", methods=["GET"])
+def diagnose_gpu():
+    """Run GPU crash diagnosis"""
+    try:
+        diagnosis = diagnose_gpu_crash()
+        return jsonify({
+            "diagnosis": diagnosis,
+            "success": True,
+            "timestamp": time.time()
+        })
+    except Exception as e:
+        logger.exception(f"Error running GPU diagnosis: {e}")
+        return jsonify({
+            "status": f"Error: {str(e)}",
+            "success": False,
+            "timestamp": time.time()
+        })
 
 # Ensure the model process is killed when Flask exits
 def cleanup():
