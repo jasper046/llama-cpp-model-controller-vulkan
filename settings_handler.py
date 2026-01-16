@@ -14,7 +14,7 @@ class SettingsHandler:
         "model_index": 0,
 
         # Model parameters
-        "ngl": "999",  # All layers to GPU for maximum speed
+        "ngl": "999",  # All layers to GPU (same as 99 for this model)
         "ctx_size": "16384",
         "port": "4000",
         "host": "0.0.0.0",
@@ -27,7 +27,7 @@ class SettingsHandler:
         "flash_attn": "on",
         "parallel": "1",
         "cont_batching": "true",
-        "extra_args": "--jinja --chat-template chatml --gpu-sampling -ctk q8_0"
+        "extra_args": "--jinja --chat-template chatml"
     }
 
     # Settings file path

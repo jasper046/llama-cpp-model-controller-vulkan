@@ -342,7 +342,7 @@ def start_server():
         flash_attn = form_defaults.get("flash_attn", "on")
         parallel = form_defaults.get("parallel", "1")
         cont_batching = form_defaults.get("cont_batching", "true")
-        extra_args = form_defaults.get("extra_args", "--jinja --chat-template chatml --gpu-sampling -ctk q8_0")
+        extra_args = form_defaults.get("extra_args", "--jinja --chat-template chatml")
 
         # Log the actual values being used
         logger.debug(f"Using model: {model}")
