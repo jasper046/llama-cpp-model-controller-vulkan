@@ -56,38 +56,90 @@ def log_reader(process):
     threading.Thread(target=read_stream, args=(process.stderr, "ERR"), daemon=True).start()
 
 def stop_model_if_running():
-    """Stop the currently running model if there is one. Returns True if a model was stopped."""
+    """Stop any running llama-server processes with proper cleanup"""
     global model_process
+    killed_any = False
 
-    if model_process:
-        logger.debug("Stopping currently running model...")
+    # 1. Stop the main model process if we have it
+    if model_process and model_process.poll() is None:
+        logger.info("Stopping model process (PID: %s)...", model_process.pid)
+
+        # Try SIGTERM first (graceful)
+        model_process.terminate()
+
+        # Wait with timeout
         try:
-            os.killpg(os.getpgid(model_process.pid), signal.SIGTERM)
-            logger.debug("Model process terminated")
-        except Exception as e:
-            logger.error(f"Error killing model process: {e}")
-            # Continue anyway - process might already be dead
-        finally:
-            model_process = None
+            model_process.wait(timeout=10)
+            logger.info("Model process stopped gracefully")
+            killed_any = True
+        except subprocess.TimeoutExpired:
+            logger.warning("Model process didn't stop gracefully, sending SIGKILL...")
+            model_process.kill()  # SIGKILL
 
-        # Clear Llama-Server Cache
-        try:
-            subprocess.run(["rm", "-rf", CACHE_DIR], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            logger.debug("Llama cache cleared")
-        except Exception as e:
-            logger.error(f"Error clearing cache: {e}")
-            # Continue anyway - model is already stopped
+            try:
+                model_process.wait(timeout=5)
+                logger.info("Model process killed with SIGKILL")
+                killed_any = True
+            except subprocess.TimeoutExpired:
+                logger.error("Model process won't die! PID: %s", model_process.pid)
+                # Process might be in D state
 
-        # Double-check: Kill any remaining `llama-server` processes
-        try:
-            subprocess.run(["pkill", "-f", "llama-server"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            logger.debug("Killed any remaining llama-server processes")
-        except Exception as e:
-            logger.error(f"Error killing remaining processes: {e}")
-            # Continue anyway - main process is already stopped
+    # 2. Kill ALL llama-server processes (cleanup any orphans)
+    logger.info("Cleaning up all llama-server processes...")
 
-        return True
-    return False
+    # First try pkill -f (matches command line)
+    try:
+        subprocess.run(["pkill", "-f", "llama-server"],
+                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+        time.sleep(2)
+    except:
+        pass
+
+    # Check if any remain
+    result = subprocess.run(["pgrep", "-f", "llama-server"],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    if result.returncode == 0:  # Processes still exist
+        pids = result.stdout.strip().split()
+        logger.warning(f"llama-server processes still running: {pids}")
+
+        # Try SIGKILL on each
+        for pid in pids:
+            try:
+                os.kill(int(pid), signal.SIGKILL)
+                logger.info(f"Sent SIGKILL to PID {pid}")
+            except:
+                pass
+
+        time.sleep(2)
+
+        # Final check
+        result = subprocess.run(["pgrep", "-f", "llama-server"],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        if result.returncode == 0:
+            pids = result.stdout.decode().strip().split()
+            logger.error(f"llama-server processes STILL running: {pids}")
+            logger.error("Processes may be in D state (unkillable)")
+        else:
+            logger.info("All llama-server processes cleaned up")
+            killed_any = True
+    else:
+        logger.info("No llama-server processes running")
+        killed_any = True
+
+    # Clear Llama-Server Cache
+    try:
+        subprocess.run(["rm", "-rf", CACHE_DIR], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        logger.debug("Llama cache cleared")
+    except Exception as e:
+        logger.error(f"Error clearing cache: {e}")
+        # Continue anyway - model is already stopped
+
+    # Reset model_process
+    model_process = None
+
+    return killed_any
 
 @app.route("/")
 def index():
