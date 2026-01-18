@@ -13,6 +13,7 @@ from flask import Flask
 from src.routes import register_routes
 from src.services.model_service import ModelService
 from src.services.gpu_service import GPUService
+from src.services.gpu_diagnosis_service import GPUDiagnosisService
 from src.services.log_service import LogService
 from src.services.settings_service import SettingsService
 from src.utils.config import Config
@@ -31,11 +32,12 @@ def create_app():
     # Initialize services with dependency injection
     model_service = ModelService(config)
     gpu_service = GPUService(config)
+    gpu_diagnosis_service = GPUDiagnosisService(config)
     log_service = LogService()
     settings_service = SettingsService()
     
     # Register routes with services
-    register_routes(app, model_service, gpu_service, log_service, settings_service)
+    register_routes(app, model_service, gpu_service, gpu_diagnosis_service, log_service, settings_service)
     
     # Setup cleanup
     def cleanup():

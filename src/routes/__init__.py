@@ -10,7 +10,7 @@ from src.utils.config import Config
 
 logger = logging.getLogger(__name__)
 
-def register_routes(app, model_service, gpu_service, log_service, settings_service):
+def register_routes(app, model_service, gpu_service, gpu_diagnosis_service, log_service, settings_service):
     """Register all routes with the Flask application"""
     
     config = Config()
@@ -150,7 +150,7 @@ def register_routes(app, model_service, gpu_service, log_service, settings_servi
     def diagnose_gpu():
         """Run GPU crash diagnosis"""
         try:
-            diagnosis = gpu_service.diagnose_gpu_crash()
+            diagnosis = gpu_diagnosis_service.diagnose_gpu_crash()
             return jsonify({
                 "diagnosis": diagnosis,
                 "success": True,

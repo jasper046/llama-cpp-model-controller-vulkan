@@ -6,11 +6,8 @@ Uses background thread for data collection and caching
 import threading
 import time
 import logging
-import subprocess
-import re
 import glob
-import os
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -40,7 +37,7 @@ class GPUService:
         self.stats_cache: Dict[str, GPUStats] = {}
         self.monitor_thread: Optional[threading.Thread] = None
         self.running = False
-        self.update_interval = 2  # seconds
+        self.update_interval = config.UPDATE_INTERVAL
     
     def start_monitor(self):
         """Start the background GPU monitor thread"""
@@ -121,42 +118,75 @@ class GPUService:
                 )
     
     def _read_gpu_stats(self, card_id: str, display_name: str, vulkan_id: int) -> GPUStats:
-        """Read GPU statistics from sysfs"""
-        base_path = f"/sys/class/drm/{card_id}/device"
-        
-        def read_sysfs(path, default="N/A"):
+        """Read GPU statistics from sysfs with improved path handling"""
+        def read_sysfs_metric(metric: str, default="N/A") -> str:
+            """Read a sysfs metric with path resolution"""
+            path_pattern = self.config.get_sysfs_path(card_id, metric)
+            if not path_pattern:
+                return default
+            
             try:
-                with open(path, 'r') as f:
+                # Handle glob patterns
+                if '*' in path_pattern:
+                    matches = glob.glob(path_pattern)
+                    if not matches:
+                        return default
+                    actual_path = matches[0]
+                else:
+                    actual_path = path_pattern
+                
+                with open(actual_path, 'r') as f:
                     return f.read().strip()
-            except:
+            except FileNotFoundError:
+                logger.debug(f"Path not found: {path_pattern}")
+                return default
+            except PermissionError:
+                logger.warning(f"Permission denied: {path_pattern}")
+                return default
+            except Exception as e:
+                logger.debug(f"Error reading {path_pattern}: {e}")
                 return default
         
         # Read temperature (in millidegrees Celsius)
-        temp_raw = read_sysfs(f"{base_path}/hwmon/hwmon*/temp1_input", "0")
+        temp_raw = read_sysfs_metric("temperature", "0")
         temp = f"{int(temp_raw) // 1000}°C" if temp_raw != "N/A" else "N/A"
         
         # Read GPU utilization
-        usage = read_sysfs(f"{base_path}/gpu_busy_percent", "0")
+        usage = read_sysfs_metric("gpu_busy_percent", "0")
         usage = f"{usage}%" if usage != "N/A" else "0%"
         
         # Read power (in microwatts)
-        power_raw = read_sysfs(f"{base_path}/hwmon/hwmon*/power1_average", "0")
+        power_raw = read_sysfs_metric("power", "0")
         power = f"{int(power_raw) // 1000000}W" if power_raw != "N/A" else "N/A"
         
-        # Read clocks (in kHz)
-        gpu_clock_raw = read_sysfs(f"{base_path}/pp_dpm_sclk", "0")
-        mem_clock_raw = read_sysfs(f"{base_path}/pp_dpm_mclk", "0")
+        # Read clocks
+        gpu_clock_raw = read_sysfs_metric("gpu_clock", "N/A")
+        mem_clock_raw = read_sysfs_metric("mem_clock", "N/A")
         
         # Parse clock states (format: "0: 300Mhz *" or "1: 1000Mhz")
         gpu_clock = self._parse_clock_state(gpu_clock_raw)
         mem_clock = self._parse_clock_state(mem_clock_raw)
         
         # Read fan speed (RPM)
-        fan_speed = read_sysfs(f"{base_path}/hwmon/hwmon*/fan1_input", "N/A")
+        fan_speed = read_sysfs_metric("fan_speed", "N/A")
         fan_speed = f"{fan_speed}RPM" if fan_speed != "N/A" else "N/A"
         
-        # Read VRAM (simplified - AMD sysfs doesn't expose this easily)
-        memory = "0.00Gi/0.00Gi"  # Placeholder
+        # Read VRAM from AMD sysfs
+        vram_total_raw = read_sysfs_metric("vram_total", "0")
+        vram_used_raw = read_sysfs_metric("vram_used", "0")
+        
+        # Convert bytes to GiB (1 GiB = 1073741824 bytes)
+        if vram_total_raw != "N/A" and vram_used_raw != "N/A":
+            try:
+                vram_total = int(vram_total_raw)
+                vram_used = int(vram_used_raw)
+                vram_total_gib = vram_total / 1073741824
+                vram_used_gib = vram_used / 1073741824
+                memory = f"{vram_used_gib:.2f}Gi/{vram_total_gib:.2f}Gi"
+            except (ValueError, ZeroDivisionError):
+                memory = "0.00Gi/0.00Gi"
+        else:
+            memory = "0.00Gi/0.00Gi"
         
         return GPUStats(
             card_id=card_id,
@@ -173,7 +203,7 @@ class GPUService:
         )
     
     def _parse_clock_state(self, clock_data: str) -> str:
-        """Parse clock state from pp_dpm format"""
+        """Parse clock state from pp_dpm format with improved handling"""
         if clock_data == "N/A":
             return "N/A"
         
@@ -191,217 +221,3 @@ class GPUService:
                 return parts[1].strip().split()[0]
         
         return "N/A"
-    def diagnose_gpu_crash(self) -> Dict[str, Any]:
-        """Comprehensive GPU crash diagnosis"""
-        diagnosis = {
-            'timestamp': time.time(),
-            'd_state_processes': False,
-            'd_state_pids': [],
-            'gpu_sysfs_healthy': True,
-            'gpu_sysfs_errors': [],
-            'journalctl_errors': False,
-            'journalctl_messages': [],
-            'recommendation': 'No issues detected',
-            'severity': 'info'  # info, warning, critical
-        }
-
-        # Check for D state processes
-        has_d_state, d_pids = self._check_d_state_processes("llama-server")
-        diagnosis['d_state_processes'] = has_d_state
-        diagnosis['d_state_pids'] = d_pids
-
-        # Check GPU sysfs health (focus on first GPU)
-        if self.config.GPU_CARDS:
-            card_id = self.config.GPU_CARDS[0][0]  # First GPU card ID
-            is_healthy, errors = self._check_gpu_sysfs_health(card_id)
-            diagnosis['gpu_sysfs_healthy'] = is_healthy
-            diagnosis['gpu_sysfs_errors'] = errors
-
-        # Check journalctl for GPU errors
-        has_journal_errors, journal_messages = self._check_journalctl_gpu_errors("10 minutes ago")
-        diagnosis['journalctl_errors'] = has_journal_errors
-        diagnosis['journalctl_messages'] = journal_messages
-
-        # Determine severity and recommendation
-        if has_d_state:
-            diagnosis['severity'] = 'critical'
-            diagnosis['recommendation'] = (
-                "CRITICAL: Processes in D (uninterruptible sleep) state detected. "
-                "This indicates GPU memory crash. Processes cannot be killed. "
-                "Recommended action: Hard system reset required."
-            )
-        elif not diagnosis['gpu_sysfs_healthy'] and has_journal_errors:
-            diagnosis['severity'] = 'critical'
-            diagnosis['recommendation'] = (
-                "CRITICAL: GPU sysfs inaccessible and journalctl shows GPU errors. "
-                "GPU may be crashed. Check GPU health and consider reset."
-            )
-        elif not diagnosis['gpu_sysfs_healthy']:
-            diagnosis['severity'] = 'warning'
-            diagnosis['recommendation'] = (
-                "WARNING: GPU sysfs paths inaccessible. GPU may be unstable. "
-                "Monitor closely and consider stopping model."
-            )
-        elif has_journal_errors:
-            diagnosis['severity'] = 'warning'
-            diagnosis['recommendation'] = (
-                "WARNING: GPU-related errors in system logs. "
-                "Monitor GPU stability and consider reducing overclock."
-            )
-
-        return diagnosis
-    
-    def _check_d_state_processes(self, process_name: str = "llama-server") -> Tuple[bool, List[str]]:
-        """Check if any processes are in D (uninterruptible sleep) state."""
-        processes = self._get_process_states(process_name)
-        d_state_pids = []
-
-        for proc in processes:
-            if proc['is_d_state']:
-                d_state_pids.append(proc['pid'])
-                logger.warning(
-                    f"Process {proc['pid']} ({proc['command']}) is in D state "
-                    f"(uninterruptible sleep). State: {proc['state']}"
-                )
-
-        has_d_state = len(d_state_pids) > 0
-        if has_d_state:
-            logger.critical(
-                f"Found {len(d_state_pids)} processes in D state: {d_state_pids}. "
-                f"These cannot be killed and may indicate GPU memory crash."
-            )
-
-        return has_d_state, d_state_pids
-    
-    def _get_process_states(self, process_name: str = "llama-server") -> List[Dict[str, str]]:
-        """Get process states for all processes matching the given name."""
-        processes = []
-
-        try:
-            # Get process list with states
-            result = subprocess.run(
-                ['ps', '-eo', 'pid,stat,comm,args'],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-
-            if result.returncode != 0:
-                logger.error(f"ps command failed: {result.stderr}")
-                return processes
-
-            # Parse output
-            for line in result.stdout.strip().split('\n')[1:]:  # Skip header
-                if not line.strip():
-                    continue
-
-                # Parse: PID STAT COMMAND ARGS
-                parts = line.split(maxsplit=3)
-                if len(parts) < 3:
-                    continue
-
-                pid, state, comm = parts[0], parts[1], parts[2]
-                args = parts[3] if len(parts) > 3 else ""
-
-                # Check if process name matches
-                if process_name.lower() in comm.lower() or process_name.lower() in args.lower():
-                    processes.append({
-                        'pid': pid,
-                        'state': state,
-                        'command': comm,
-                        'args': args,
-                        'is_d_state': 'D' in state  # D = uninterruptible sleep
-                    })
-
-        except subprocess.TimeoutExpired:
-            logger.error("ps command timed out")
-        except Exception as e:
-            logger.error(f"Error getting process states: {e}")
-
-        return processes
-    
-    def _check_gpu_sysfs_health(self, card_id: str = "card1") -> Tuple[bool, List[str]]:
-        """Check if GPU sysfs paths are accessible."""
-        errors = []
-
-        # Critical sysfs paths to check
-        critical_paths = [
-            f"/sys/class/drm/{card_id}/device/gpu_busy_percent",
-            f"/sys/class/drm/{card_id}/device/pp_dpm_sclk",
-            f"/sys/class/drm/{card_id}/device/pp_dpm_mclk",
-            f"/sys/class/drm/{card_id}/device/hwmon/hwmon*/temp1_input",
-        ]
-
-        for path_pattern in critical_paths:
-            try:
-                # Expand glob patterns
-                if '*' in path_pattern:
-                    matches = glob.glob(path_pattern)
-                    if not matches:
-                        errors.append(f"No matches for pattern: {path_pattern}")
-                        continue
-                    actual_path = matches[0]
-                else:
-                    actual_path = path_pattern
-
-                # Check if path exists and is readable
-                if not os.path.exists(actual_path):
-                    errors.append(f"Path does not exist: {actual_path}")
-                else:
-                    # Try to read a small amount
-                    with open(actual_path, 'r') as f:
-                        f.read(1024)  # Try reading up to 1KB
-
-            except PermissionError:
-                errors.append(f"Permission denied: {actual_path}")
-            except OSError as e:
-                errors.append(f"OS error reading {actual_path}: {e}")
-            except Exception as e:
-                errors.append(f"Unexpected error with {path_pattern}: {e}")
-
-        is_healthy = len(errors) == 0
-        if not is_healthy:
-            logger.warning(f"GPU sysfs health check failed for {card_id}: {errors}")
-
-        return is_healthy, errors
-    
-    def _check_journalctl_gpu_errors(self, since: str = "5 minutes ago") -> Tuple[bool, List[str]]:
-        """Check journalctl for GPU-related error messages."""
-        error_messages = []
-
-        try:
-            # Common GPU error patterns
-            patterns = [
-                "amdgpu.*error",
-                "amdgpu.*failed",
-                "amdgpu.*timeout",
-                "GPU.*reset",
-                "memory.*allocation.*failed",
-                "vram.*error",
-                "D state",
-                "uninterruptible",
-            ]
-
-            # Build journalctl command
-            cmd = ['journalctl', '--since', since, '--priority=err', '--no-pager']
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-
-            if result.returncode != 0:
-                logger.error(f"journalctl command failed: {result.stderr}")
-                return False, error_messages
-
-            # Check for GPU-related errors
-            lines = result.stdout.strip().split('\n')
-            for line in lines:
-                line_lower = line.lower()
-                if any(pattern in line_lower for pattern in patterns):
-                    error_messages.append(line)
-                    logger.warning(f"Found GPU-related error in logs: {line}")
-
-        except subprocess.TimeoutExpired:
-            logger.error("journalctl command timed out")
-        except Exception as e:
-            logger.error(f"Error checking journalctl: {e}")
-
-        has_errors = len(error_messages) > 0
-        return has_errors, error_messages

@@ -156,34 +156,99 @@ mkdir -p models
 # Copy or download your GGUF models to the models directory
 ```
 
-### 5. Configure the application
+## ⚙️ Configuration System
 
-Edit `config.py` to customize the paths and GPU configuration:
+### JSON Configuration (New)
+The application now supports JSON-based configuration for easy adaptation to different target machines. The system automatically loads `config.json` if present, otherwise uses defaults.
 
-```python
-import os
+**Configuration Files:**
+- `config_template.json` - Template with all available options
+- `config.json` - User configuration (created from template)
 
-HOME_DIR = os.path.expanduser("~")
-LLAMA_CPP_PATH = "/usr/local/bin/llama-server"  # Path to Vulkan-compiled llama-server
-MODEL_DIR = os.path.join(HOME_DIR, "models")    # Directory containing GGUF models
-CACHE_DIR = os.path.join(HOME_DIR, ".cache/llama")
-SLOTS_DIR = "/tmp/llama_slots"                  # Will be created automatically
+**To customize for your target machine:**
+```bash
+# 1. Copy the template
+cp config_template.json config.json
 
-# Update card IDs, names, and Vulkan device IDs based on your system
-# Format: (sysfs_card_id, display_name, vulkan_device_id)
-# Use `llama-cli --list-devices` to see Vulkan device order
-GPU_CARDS = [
-    ("card1", "RX 470", 1),    # Ellesmere [Radeon RX 470/480/570...] = Vulkan device 1
-    ("card2", "RX 6600", 0)    # Navi 23 [Radeon RX 6600/6600 XT/6600M] = Vulkan device 0
-]
+# 2. Edit config.json for your system
+nano config.json
+
+# 3. Key sections to customize:
+# - gpu_configuration.gpu_cards: Update card IDs, display names, Vulkan IDs
+# - model_configuration: Update paths to match your system
+# - sysfs_paths: Adjust if your AMD GPU uses different sysfs paths
 ```
 
-You can modify these values to match your specific environment:
-- `LLAMA_CPP_PATH`: Path to your Vulkan-compiled llama-server executable
-- `MODEL_DIR`: Where your GGUF models are stored
-- `CACHE_DIR`: Where llama.cpp stores its cache files
-- `SLOTS_DIR`: Directory for saving conversation slots
-- `GPU_CARDS`: List of GPU cards with sysfs ID, display name, and Vulkan device ID
+**Example config.json structure:**
+```json
+{
+  "gpu_configuration": {
+    "gpu_cards": [
+      {
+        "card_id": "card1",
+        "display_name": "RX 470",
+        "vulkan_id": 1
+      },
+      {
+        "card_id": "card2", 
+        "display_name": "RX 6600",
+        "vulkan_id": 0
+      }
+    ],
+    "sysfs_paths": {
+      "gpu_busy_percent": "gpu_busy_percent",
+      "temperature": "hwmon/hwmon*/temp1_input",
+      "power": "hwmon/hwmon*/power1_average",
+      "gpu_clock": "pp_dpm_sclk",
+      "mem_clock": "pp_dpm_mclk",
+      "fan_speed": "hwmon/hwmon*/fan1_input",
+      "vram_total": "mem_info_vram_total",
+      "vram_used": "mem_info_vram_used"
+    }
+  },
+  "model_configuration": {
+    "llama_cpp_path": "/usr/local/bin/llama-server",
+    "model_dir": "~/models",
+    "cache_dir": "~/.cache/llama",
+    "slots_dir": "/tmp/llama_slots"
+  },
+  "default_parameters": {
+    "port": "4000",
+    "host": "0.0.0.0",
+    "ngl": "999",
+    "ctx_size": "16384",
+    "batch_size": "512",
+    "ubatch_size": "128",
+    "main_gpu": "0",
+    "tensor_split": "0.54,0.13,0.33",
+    "flash_attn": "on",
+    "parallel": "1",
+    "cont_batching": "true",
+    "extra_args": "--jinja --chat-template chatml"
+  },
+  "monitoring": {
+    "update_interval": 2,
+    "cache_ttl": 5,
+    "diagnosis_interval": 60
+  }
+}
+```
+
+**Configuration Priority:**
+1. `config.json` (if exists)
+2. Default values in `src/utils/config.py`
+
+**Verifying Configuration:**
+```bash
+# Check what configuration is loaded
+python -c "from src.utils.config import Config; c = Config(); print(f'GPU Cards: {c.GPU_CARDS}')"
+
+# Save current configuration as template
+python -c "from src.utils.config import Config; c = Config(); c.save_template('my_config_template.json')"
+```
+
+### Legacy Configuration
+The original `config.py` hardcoded approach is still supported but deprecated. The new JSON system provides better flexibility for different target machines.
 
 
 ## 🖥️ Usage
