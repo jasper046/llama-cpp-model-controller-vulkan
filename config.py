@@ -8,6 +8,7 @@ SLOTS_DIR = "/tmp/llama_slots"
 
 GPU_CARDS = [
     # Format: (sysfs_card_id, display_name, vulkan_device_id)
-    ("card1", "RX 470", 1),    # card1 = RX 470 = Vulkan device 1
-    ("card2", "RX 6600", 0)    # card2 = RX 6600 = Vulkan device 0
+    ("card1", "RX 500", 1),    # card1 = RX 550 = Vulkan device 1
+    ("card2", "RX 470", 2),    # card1 = RX 470 = Vulkan device 2
+    ("card3", "RX 6600", 0)    # card2 = RX 6600 = Vulkan device 0
 ]
