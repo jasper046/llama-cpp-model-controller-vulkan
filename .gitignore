@@ -1,35 +1,58 @@
-# Python virtual environment
-venv/
-
-# Llama model files and directories
-models/
-llama.cpp*/
-
-# Python cache files
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
-
-# Distribution / packaging
-dist/
+*.so
+.Python
 build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
 *.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# Logs
-*.log
+# Virtual Environment
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
 
-# Environment variables
-.env
-
-# IDE specific files
-.idea/
+# IDE
 .vscode/
+.idea/
 *.swp
 *.swo
+*~
 
-# OS specific files
+# OS
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
 
-# Claude Code documentation (auto-generated)
-CLAUDE.md
+# Project specific
+*.log
+*.pid
+*.seed
+*.pid.lock
+
+# Empty __init__.py files (generated)
+src/__init__.py
+src/services/__init__.py
+src/utils/__init__.py
+src/models/__init__.py
