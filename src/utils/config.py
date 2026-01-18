@@ -20,8 +20,9 @@ class Config:
         
         # GPU configuration - should be updated based on system
         self.GPU_CARDS = [
-            ("card1", "RX 470", 1),
-            ("card2", "RX 6600", 0)
+            ("card1", "RX 500", 1),    # card1 = RX 550 = Vulkan device 1
+            ("card2", "RX 470", 2),    # card2 = RX 470 = Vulkan device 2
+            ("card3", "RX 6600", 0)    # card3 = RX 6600 = Vulkan device 0
         ]
         
         # Default model parameters
