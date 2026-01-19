@@ -3,7 +3,7 @@
     "gpu_cards": [
       {
         "card_id": "card1",
-        "display_name": "RX 500",
+        "display_name": "RX 550",
         "vulkan_id": 1,
         "sysfs_base": "/sys/class/drm/card1/device",
         "hwmon_pattern": "hwmon/hwmon*"
