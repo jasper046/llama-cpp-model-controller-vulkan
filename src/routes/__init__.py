@@ -163,3 +163,21 @@ def register_routes(app, model_service, gpu_service, gpu_diagnosis_service, log_
                 "success": False,
                 "timestamp": time.time()
             })
+    
+    @app.route("/cleanup_processes", methods=["POST"])
+    def cleanup_processes():
+        """Clean up orphaned llama-server processes"""
+        try:
+            killed_count = model_service.cleanup_orphaned_processes()
+            log_service.add_log(f"Cleaned up {killed_count} orphaned llama-server process(es)")
+            return jsonify({
+                "status": f"Cleaned up {killed_count} orphaned process(es)",
+                "killed_count": killed_count,
+                "success": True
+            })
+        except Exception as e:
+            logger.exception(f"Error cleaning up processes: {e}")
+            return jsonify({
+                "status": f"Error: {str(e)}",
+                "success": False
+            })

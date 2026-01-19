@@ -36,6 +36,11 @@ def create_app():
     log_service = LogService()
     settings_service = SettingsService()
     
+    # Clean up any orphaned llama-server processes from previous runs
+    orphaned_count = model_service.cleanup_orphaned_processes()
+    if orphaned_count > 0:
+        logger.info(f"Cleaned up {orphaned_count} orphaned llama-server process(es) on startup")
+    
     # Register routes with services
     register_routes(app, model_service, gpu_service, gpu_diagnosis_service, log_service, settings_service)
     

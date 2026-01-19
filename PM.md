@@ -63,7 +63,10 @@
 - **Process Group Killing**: Changed from `terminate()`/`kill()` on single PID to `os.killpg()` to kill the entire process group (created by `os.setsid`)
 - **Orphaned Process Cleanup**: Added `cleanup_orphaned_processes()` method using `psutil` to find and kill any orphaned llama-server processes
 - **Enhanced Error Handling**: Added `ProcessLookupError` handling for cases where processes have already died
-- **Automatic Cleanup**: Orphaned process cleanup runs automatically in `cleanup()` method
+- **Automatic Cleanup**: 
+  - Runs on app startup to clean up orphaned processes from previous runs
+  - Runs on page load via `/cleanup_processes` endpoint
+  - Runs in `cleanup()` method on shutdown
 
 ## 📓 Decision Log & Architecture Constraints
 - *Decision*: Strict separation between frontend serving and backend processing
