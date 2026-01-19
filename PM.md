@@ -23,6 +23,9 @@
 - [x] Refactor gpu_service.py to meet <400 line limit (split into gpu_service.py and gpu_diagnosis_service.py) ✓
 - [x] Create JSON configuration system for easy target machine adaptation ✓
 - [x] Improve GPU monitoring with sysfs path discovery and fallbacks ✓
+- [x] Fix GPU monitoring fan speed reading errors with robust hwmon path discovery ✓
+- [x] Add error deduplication to prevent log spam from repeated GPU metric errors ✓
+- [x] Add disabled_metrics configuration option to skip unsupported metrics per GPU ✓
 - [x] Test on target machine (remote, not this laptop) ✓
 - [x] Verify GPU monitoring works with actual AMD GPUs ✓
 - [x] Validate llama-server process management ✓
@@ -43,6 +46,15 @@
 - Implemented fallback reading methods for missing sysfs paths
 - Added GPU-specific configuration via `SYSFS_PATHS` in config
 - Enhanced error handling with default values
+
+### 3. ✅ GPU Fan Speed Reading FIXED
+**Problem**: Target machine logs showing repeated `[Errno 22] Invalid argument` errors when reading fan speed from `/sys/class/drm/card1/device/hwmon/hwmon*/fan1_input`
+
+**Solutions Implemented**:
+- **Robust HWMON Path Discovery**: Instead of reading from DRM device path, scan `/sys/class/hwmon/hwmon*` to find correct hwmon device matching the GPU card by comparing device symlinks (same approach as `nvtop`)
+- **Error Deduplication**: Added `_log_error_once()` method to suppress identical error messages for 5 minutes, preventing log spam
+- **Disabled Metrics Support**: Added `disabled_metrics` config option to disable specific metrics per GPU (e.g., `{"card1": ["fan_speed"]}`)
+- **Alternative Fan Reading**: Falls back to reading `pwm1` value if `fan1_input` fails
 
 ## 📓 Decision Log & Architecture Constraints
 - *Decision*: Strict separation between frontend serving and backend processing

@@ -7,6 +7,7 @@ import threading
 import time
 import logging
 import glob
+import os
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from datetime import datetime
@@ -38,6 +39,7 @@ class GPUService:
         self.monitor_thread: Optional[threading.Thread] = None
         self.running = False
         self.update_interval = config.UPDATE_INTERVAL
+        self.seen_errors: Dict[str, float] = {}  # Track errors with timestamp for deduplication
     
     def start_monitor(self):
         """Start the background GPU monitor thread"""
@@ -88,6 +90,7 @@ class GPUService:
         while self.running:
             try:
                 self._update_stats()
+                self._cleanup_old_errors()
             except Exception as e:
                 logger.error(f"Error in GPU monitor loop: {e}")
             
@@ -119,8 +122,16 @@ class GPUService:
     
     def _read_gpu_stats(self, card_id: str, display_name: str, vulkan_id: int) -> GPUStats:
         """Read GPU statistics from sysfs with improved path handling"""
+        # Find hwmon device for this GPU card
+        hwmon_device = self._find_hwmon_device(card_id)
+        
         def read_sysfs_metric(metric: str, default="N/A") -> str:
             """Read a sysfs metric with path resolution"""
+            # If this is a hwmon-related metric, use hwmon_device
+            if metric in ["temperature", "power", "fan_speed"] and hwmon_device:
+                return self._read_hwmon_metric(hwmon_device, metric, default)
+            
+            # For other metrics, use DRM device path
             path_pattern = self.config.get_sysfs_path(card_id, metric)
             if not path_pattern:
                 return default
@@ -138,13 +149,13 @@ class GPUService:
                 with open(actual_path, 'r') as f:
                     return f.read().strip()
             except FileNotFoundError:
-                logger.debug(f"Path not found: {path_pattern}")
+                self._log_error_once(f"Path not found: {path_pattern}")
                 return default
             except PermissionError:
                 logger.warning(f"Permission denied: {path_pattern}")
                 return default
             except Exception as e:
-                logger.debug(f"Error reading {path_pattern}: {e}")
+                self._log_error_once(f"Error reading {path_pattern}: {e}")
                 return default
         
         # Read temperature (in millidegrees Celsius)
@@ -221,3 +232,95 @@ class GPUService:
                 return parts[1].strip().split()[0]
         
         return "N/A"
+    
+    def _log_error_once(self, error_message: str):
+        """Log an error only if it hasn't been seen recently (within 5 minutes)"""
+        now = time.time()
+        
+        if error_message in self.seen_errors:
+            last_seen = self.seen_errors[error_message]
+            if now - last_seen < 300:  # 5 minutes
+                return
+        
+        self.seen_errors[error_message] = now
+        logger.debug(error_message)
+    
+    def _cleanup_old_errors(self):
+        """Remove error entries older than 5 minutes"""
+        now = time.time()
+        self.seen_errors = {
+            msg: ts for msg, ts in self.seen_errors.items()
+            if now - ts < 300
+        }
+    
+    def _find_hwmon_device(self, card_id: str) -> Optional[str]:
+        """
+        Find the hwmon device for a specific GPU card.
+        Returns the hwmon directory path (e.g., '/sys/class/hwmon/hwmon3') or None.
+        """
+        card_path = f"/sys/class/drm/{card_id}"
+        
+        # Check if card device exists
+        if not os.path.exists(card_path):
+            return None
+        
+        # Get the device path for this card
+        try:
+            device_link = os.path.realpath(os.path.join(card_path, "device"))
+        except (OSError, FileNotFoundError):
+            return None
+        
+        # Scan all hwmon devices and find one that belongs to this GPU
+        for hwmon_path in glob.glob("/sys/class/hwmon/hwmon*"):
+            try:
+                hwmon_device_link = os.path.realpath(os.path.join(hwmon_path, "device"))
+                # Check if this hwmon device belongs to the same GPU card
+                if hwmon_device_link == device_link:
+                    return hwmon_path
+            except (OSError, FileNotFoundError):
+                continue
+        
+        return None
+    
+    def _read_hwmon_metric(self, hwmon_path: str, metric: str, default: str = "N/A") -> str:
+        """
+        Read a metric from the hwmon device.
+        
+        Args:
+            hwmon_path: Path to hwmon device (e.g., '/sys/class/hwmon/hwmon3')
+            metric: Metric name ('temperature', 'power', 'fan_speed')
+            default: Default value if reading fails
+        """
+        # Map metric names to hwmon file names
+        metric_files = {
+            "temperature": "temp1_input",
+            "power": "power1_average",
+            "fan_speed": "fan1_input"
+        }
+        
+        # Try primary file name
+        filename = metric_files.get(metric)
+        if not filename:
+            return default
+        
+        # Try to read the file
+        try:
+            file_path = os.path.join(hwmon_path, filename)
+            with open(file_path, 'r') as f:
+                return f.read().strip()
+        except FileNotFoundError:
+            # For fan_speed, try alternative: pwm1 (percentage control value)
+            if metric == "fan_speed":
+                try:
+                    pwm_path = os.path.join(hwmon_path, "pwm1")
+                    with open(pwm_path, 'r') as f:
+                        pwm_value = int(f.read().strip())
+                        # Convert PWM (0-255) to approximate RPM or show as percentage
+                        return f"{pwm_value}"
+                except Exception:
+                    pass
+            self._log_error_once(f"HWMON file not found: {file_path}")
+            return default
+        except Exception as e:
+            self._log_error_once(f"Error reading HWMON {file_path}: {e}")
+            return default

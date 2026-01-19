@@ -43,6 +43,9 @@ class Config:
             "vram_used": "mem_info_vram_used"
         }
         
+        # Metrics to disable per GPU (card_id: [metric_names])
+        self.DISABLED_METRICS: Dict[str, List[str]] = {}
+        
         # Default model parameters
         self.DEFAULT_PARAMS = {
             "port": "4000",
@@ -101,6 +104,10 @@ class Config:
             # Update sysfs paths
             if "sysfs_paths" in gpu_config:
                 self.SYSFS_PATHS.update(gpu_config["sysfs_paths"])
+            
+            # Update disabled metrics
+            if "disabled_metrics" in gpu_config:
+                self.DISABLED_METRICS = gpu_config["disabled_metrics"]
         
         # Apply model configuration
         if "model_configuration" in self.config_data:
@@ -191,6 +198,10 @@ class Config:
     
     def get_sysfs_path(self, card_id: str, metric: str) -> str:
         """Get sysfs path for a specific GPU metric"""
+        # Check if metric is disabled for this GPU
+        if card_id in self.DISABLED_METRICS and metric in self.DISABLED_METRICS[card_id]:
+            return ""
+        
         base_path = f"/sys/class/drm/{card_id}/device"
         path_pattern = self.SYSFS_PATHS.get(metric, "")
         
