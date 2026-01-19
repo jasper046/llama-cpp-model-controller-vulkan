@@ -56,6 +56,15 @@
 - **Disabled Metrics Support**: Added `disabled_metrics` config option to disable specific metrics per GPU (e.g., `{"card1": ["fan_speed"]}`)
 - **Alternative Fan Reading**: Falls back to reading `pwm1` value if `fan1_input` fails
 
+### 4. ✅ Llama-Server Process Killing FIXED
+**Problem**: Not all llama-server instances are killed when stopping a model. Child processes and orphaned processes remain running.
+
+**Solutions Implemented**:
+- **Process Group Killing**: Changed from `terminate()`/`kill()` on single PID to `os.killpg()` to kill the entire process group (created by `os.setsid`)
+- **Orphaned Process Cleanup**: Added `cleanup_orphaned_processes()` method using `psutil` to find and kill any orphaned llama-server processes
+- **Enhanced Error Handling**: Added `ProcessLookupError` handling for cases where processes have already died
+- **Automatic Cleanup**: Orphaned process cleanup runs automatically in `cleanup()` method
+
 ## 📓 Decision Log & Architecture Constraints
 - *Decision*: Strict separation between frontend serving and backend processing
 - *Decision*: Backend decides when to update data, not frontend

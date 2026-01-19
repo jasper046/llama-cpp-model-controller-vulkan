@@ -9,7 +9,8 @@ import signal
 import threading
 import time
 import logging
-from typing import Optional
+import psutil
+from typing import Optional, List
 
 logger = logging.getLogger(__name__)
 
@@ -68,9 +69,24 @@ class ModelService:
             logger.info("No model process to stop")
             return True
         
+        process_gid = None
         try:
-            # Try graceful termination first
-            self.model_process.terminate()
+            # Get the process group ID (PGID)
+            try:
+                process_gid = os.getpgid(self.model_process.pid)
+            except ProcessLookupError:
+                logger.warning(f"Process {self.model_process.pid} no longer exists")
+                self.model_process = None
+                return True
+            
+            # Try graceful termination - kill entire process group
+            logger.info(f"Sending SIGTERM to process group {process_gid} (PID {self.model_process.pid})")
+            try:
+                os.killpg(process_gid, signal.SIGTERM)
+            except ProcessLookupError:
+                logger.warning("Process group no longer exists")
+                self.model_process = None
+                return True
             
             # Wait with timeout
             try:
@@ -78,8 +94,13 @@ class ModelService:
                 logger.info("Model process stopped gracefully")
                 return True
             except subprocess.TimeoutExpired:
-                logger.warning("Model process didn't stop gracefully, sending SIGKILL...")
-                self.model_process.kill()
+                logger.warning("Model process didn't stop gracefully, sending SIGKILL to process group...")
+                try:
+                    os.killpg(process_gid, signal.SIGKILL)
+                except ProcessLookupError:
+                    logger.warning("Process group no longer exists")
+                    self.model_process = None
+                    return True
                 
                 try:
                     self.model_process.wait(timeout=5)
@@ -99,6 +120,9 @@ class ModelService:
         """Cleanup resources"""
         if self.model_process is not None:
             self.stop_model()
+        
+        # Also clean up any orphaned llama-server processes
+        self.cleanup_orphaned_processes()
     
     def _build_command(self, model_name: str, params: dict) -> str:
         """Build the llama-server command string"""
@@ -131,3 +155,54 @@ class ModelService:
             cmd_parts.append(merged_params['extra_args'])
         
         return " \\\n".join(cmd_parts)
+    
+    def cleanup_orphaned_processes(self) -> int:
+        """
+        Find and kill any orphaned llama-server processes.
+        Returns the number of processes killed.
+        """
+        try:
+            killed_count = 0
+            
+            # Find all llama-server processes
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                try:
+                    # Check if this is a llama-server process
+                    if proc.info['name'] == 'llama-server' or 'llama-server' in proc.info['cmdline']:
+                        # Check if this process is orphaned (parent is not our current process)
+                        # or if it's a child process that should have been killed
+                        logger.info(f"Found orphaned llama-server process: PID {proc.info['pid']}")
+                        
+                        # Kill the entire process group
+                        try:
+                            pgid = os.getpgid(proc.info['pid'])
+                            os.killpg(pgid, signal.SIGKILL)
+                            logger.info(f"Killed process group {pgid} for PID {proc.info['pid']}")
+                            killed_count += 1
+                        except ProcessLookupError:
+                            # Process already died, try killing the PID directly
+                            try:
+                                proc.kill()
+                                logger.info(f"Killed process {proc.info['pid']}")
+                                killed_count += 1
+                            except psutil.NoSuchProcess:
+                                pass
+                        except psutil.NoSuchProcess:
+                            pass
+                            
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    continue
+            
+            if killed_count > 0:
+                logger.info(f"Cleaned up {killed_count} orphaned llama-server process(es)")
+            else:
+                logger.debug("No orphaned llama-server processes found")
+            
+            return killed_count
+            
+        except ImportError:
+            logger.warning("psutil not available, skipping orphaned process cleanup")
+            return 0
+        except Exception as e:
+            logger.error(f"Error cleaning up orphaned processes: {e}")
+            return 0
