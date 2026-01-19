@@ -19,237 +19,105 @@ This is a Vulkan-enabled fork of [Dan-Duran's Llama.cpp Model Controller](https:
 
 ## 🚀 Quick Start
 
-### 1. Clone and setup
-```bash
-git clone https://github.com/Dan-Duran/llama-cpp-model-controller.git
-cd llama-cpp-model-controller
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
+1.  **Clone and Install:**
+    ```bash
+    git clone https://github.com/Dan-Duran/llama-cpp-model-controller.git
+    cd llama-cpp-model-controller
+    python3 -m venv venv
+    source venv/bin/activate
+    pip install -r requirements.txt
+    ```
 
-### 2. Configure paths
-Edit `config.py` to match your environment:
-- `LLAMA_CPP_PATH`: Path to Vulkan-compiled llama-server
-- `MODEL_DIR`: Directory containing your GGUF models
-- `GPU_CARDS`: Update GPU card IDs and names (check `/sys/class/drm/`)
+2.  **Configure GPUs:**
+    Run the interactive script to detect your GPUs and create the `config.json` file.
+    ```bash
+    chmod +x ./gpu_autodetect_and_config.sh
+    ./gpu_autodetect_and_config.sh
+    ```
 
-### 3. Start the controller
-```bash
-source venv/bin/activate
-python app.py
-```
-Access the web UI at `http://localhost:5000`
+3.  **Start the Controller:**
+    ```bash
+    python app.py
+    ```
+    Access the web UI at `http://localhost:5000`.
 
-### 4. Deploy your first model
-1. Select a GGUF model from the dropdown
-2. Use default parameters or customize as needed
-3. Click "Start Model"
-4. Access the model at `http://localhost:4000`
+## ⚙️ Configuration
 
----
+The application is configured via `config.json`. The recommended way to create and configure this file is by using the auto-detection script.
 
-The Llama.cpp Model Controller is an intuitive web interface for managing local LLM deployments powered by llama.cpp. This application streamlines the process of starting, monitoring, and stopping language models through a clean, responsive UI, eliminating the need for complex command-line operations.
+### Recommended Method: GPU Auto-Detection Script
 
-Key features include real-time GPU monitoring with temperature, power, and usage statistics for AMD GPUs, color-coded live server logs showing token usage and model output, and customizable Vulkan deployment parameters. Users can easily configure context size, GPU layers, tensor-split ratios, and advanced options like flash attention and continuous batching for optimal performance on their hardware.
+For users on Linux, a helper script is provided to automate the detection of Vulkan devices and system paths. This is the easiest and most reliable way to configure your GPUs.
 
-## 📋 Requirements
+1.  **Make the script executable:**
+    ```bash
+    chmod +x ./gpu_autodetect_and_config.sh
+    ```
 
-- Linux environment with Vulkan support
-- AMD/NVIDIA/Intel GPU(s) with Vulkan drivers
-- Python 3.8+
-- llama.cpp compiled with Vulkan support
-- GGUF format models
+2.  **Run the script:**
+    ```bash
+    ./gpu_autodetect_and_config.sh
+    ```
 
-### Determining GPU PCIe Slots and Card IDs
+The script will interactively guide you through:
+- Detecting all available GPUs recognized by Vulkan.
+- Letting you choose which GPUs to use.
+- Asking you to assign tensor weights for splitting models across multiple GPUs.
+- Prompting you to select a primary GPU for the model.
+- Automatically generating a `config.json` file with the correct GPU settings and default parameters.
 
-Before configuring the controller, you need to identify your GPU PCIe slots and corresponding card IDs:
+After running the script, your `config.json` will be ready to use.
 
-```bash
-# 1. List all PCIe devices and find your GPUs
-lspci | grep -i vga
+### Manual GPU Configuration (Alternative)
 
-# Example output:
-# 65:00.0 VGA compatible controller: Advanced Micro Devices, Inc. [AMD/ATI] Ellesmere [Radeon RX 470/480/570/570X/580/580X/590] (rev cf)
-# b5:00.0 VGA compatible controller: Advanced Micro Devices, Inc. [AMD/ATI] Navi 23 [Radeon RX 6600/6600 XT/6600M] (rev c7)
+If the script does not work for your system, or if you prefer a manual setup, you can create the `config.json` file by hand.
 
-# 2. Check which card IDs correspond to which PCIe slots
-ls -la /sys/class/drm/card*
+1.  **Copy the template:**
+    ```bash
+    cp config_template.json config.json
+    ```
+2.  **Edit `config.json`:**
+    You will need to manually fill out the `gpu_configuration` and `model_configuration` sections.
 
-# Example output showing card1 and card2 exist:
-# lrwxrwxrwx 1 root root 0 Jan 15 07:03 /sys/class/drm/card1 -> ../../devices/pci0000:00/0000:00:08.1/0000:03:00.0/drm/card1
-# lrwxrwxrwx 1 root root 0 Jan 15 07:03 /sys/class/drm/card2 -> ../../devices/pci0000:00/0000:00:08.1/0000:03:00.0/drm/card2
+#### Finding GPU Information
 
-# 3. Match card IDs to PCIe slots (optional but helpful for debugging)
-for card in /sys/class/drm/card*; do
-    if [ -d "$card/device" ]; then
-        echo "Card: $(basename $card)"
-        cat "$card/device/uevent" | grep PCI_SLOT_NAME
-    fi
-done
+-   **List PCI devices** to see your GPUs: `lspci | grep -i vga`
+-   **Get Vulkan device ID**: Use `vulkaninfo | grep deviceName` or `llama-cli --list-devices`. The script uses `llama-cli`.
+-   **Find sysfs path**: It's typically `/sys/class/drm/card0`, `/sys/class/drm/card1`, etc. The `cardX` number usually corresponds to the GPU's order on the PCIe bus.
+-   **Find hwmon path**: Look inside the `sysfs` path for an `hwmon` directory, like `hwmon/hwmon5`.
 
-# Example output:
-# Card: card1
-# PCI_SLOT_NAME=0000:65:00.0
-# Card: card2
-# PCI_SLOT_NAME=0000:b5:00.0
+#### `config.json` Structure
 
-# 4. Update config.py with your findings
-# Edit config.py and update GPU_CARDS:
-# GPU_CARDS = [
-#     ("card1", "RX 470", 1),    # card1 = RX 470 = Vulkan device 1
-#     ("card2", "RX 6600", 0)    # card2 = RX 6600 = Vulkan device 0
-# ]
-```
+Here are the key sections to customize in `config.json`:
 
-**Important Notes:**
-- Card IDs (card0, card1, card2, etc.) may vary between systems
-- The order in `/sys/class/drm/` determines the card ID, not the PCIe slot
-- Vulkan device IDs are assigned by llama.cpp and may differ from card IDs
-- Always verify with `llama-cli --list-devices` after determining card IDs
+-   `gpu_configuration`: Defines the GPUs available to the controller.
+    -   `gpu_cards`: A list of your GPUs. Each GPU needs a `card_id` (from `sysfs`), a `display_name`, and its `vulkan_id`.
+-   `model_configuration`: Sets paths for the `llama-server` executable and model files.
+-   `default_parameters`:
+    -   `main_gpu`: The `vulkan_id` of the primary GPU.
+    -   `tensor_split`: Comma-separated values for distributing model layers across GPUs, ordered by `vulkan_id`.
 
-### Verifying Vulkan Support
-
-Before using this controller, verify your Vulkan installation:
-
-```bash
-# Check Vulkan devices
-vulkaninfo | grep deviceName
-
-# List available compute devices in llama.cpp
-/usr/local/bin/llama-cli --list-devices
-
-# Expected output for dual AMD setup (order may vary):
-# ggml_vulkan: Found 2 Vulkan devices:
-# ggml_vulkan: 0 = AMD Radeon RX 6600 ...
-# ggml_vulkan: 1 = AMD Radeon RX 470 Graphics ...
-```
-
-## 🚀 Installation
-
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/Dan-Duran/llama-cpp-model-controller.git
-cd llama-cpp-model-controller
-```
-
-### 2. Create a virtual environment
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
-```
-
-### 3. Install dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-### 4. Set up model directory
-
-By default, the application looks for models in a `models` directory. Make sure your GGUF models are placed there:
-
-```bash
-mkdir -p models
-# Copy or download your GGUF models to the models directory
-```
-
-## ⚙️ Configuration System
-
-### JSON Configuration (New)
-The application now supports JSON-based configuration for easy adaptation to different target machines. The system automatically loads `config.json` if present, otherwise uses defaults.
-
-**Configuration Files:**
-- `config_template.json` - Template with all available options
-- `config.json` - User configuration (created from template)
-
-**To customize for your target machine:**
-```bash
-# 1. Copy the template
-cp config_template.json config.json
-
-# 2. Edit config.json for your system
-nano config.json
-
-# 3. Key sections to customize:
-# - gpu_configuration.gpu_cards: Update card IDs, display names, Vulkan IDs
-# - model_configuration: Update paths to match your system
-# - sysfs_paths: Adjust if your AMD GPU uses different sysfs paths
-```
-
-**Example config.json structure:**
+**Example `gpu_configuration`:**
 ```json
-{
-  "gpu_configuration": {
-    "gpu_cards": [
-      {
-        "card_id": "card1",
-        "display_name": "RX 470",
-        "vulkan_id": 1
-      },
-      {
-        "card_id": "card2", 
-        "display_name": "RX 6600",
-        "vulkan_id": 0
-      }
-    ],
-    "sysfs_paths": {
-      "gpu_busy_percent": "gpu_busy_percent",
-      "temperature": "hwmon/hwmon*/temp1_input",
-      "power": "hwmon/hwmon*/power1_average",
-      "gpu_clock": "pp_dpm_sclk",
-      "mem_clock": "pp_dpm_mclk",
-      "fan_speed": "hwmon/hwmon*/fan1_input",
-      "vram_total": "mem_info_vram_total",
-      "vram_used": "mem_info_vram_used"
+"gpu_configuration": {
+  "gpu_cards": [
+    {
+      "card_id": "card1",
+      "display_name": "RX 470",
+      "vulkan_id": 1,
+      "sysfs_base": "/sys/class/drm/card1/device",
+      "hwmon_pattern": "hwmon/hwmon*"
+    },
+    {
+      "card_id": "card2",
+      "display_name": "RX 6600",
+      "vulkan_id": 0,
+      "sysfs_base": "/sys/class/drm/card2/device",
+      "hwmon_pattern": "hwmon/hwmon*"
     }
-  },
-  "model_configuration": {
-    "llama_cpp_path": "/usr/local/bin/llama-server",
-    "model_dir": "~/models",
-    "cache_dir": "~/.cache/llama",
-    "slots_dir": "/tmp/llama_slots"
-  },
-  "default_parameters": {
-    "port": "4000",
-    "host": "0.0.0.0",
-    "ngl": "999",
-    "ctx_size": "16384",
-    "batch_size": "512",
-    "ubatch_size": "128",
-    "main_gpu": "0",
-    "tensor_split": "0.54,0.13,0.33",
-    "flash_attn": "on",
-    "parallel": "1",
-    "cont_batching": "true",
-    "extra_args": "--jinja --chat-template chatml"
-  },
-  "monitoring": {
-    "update_interval": 2,
-    "cache_ttl": 5,
-    "diagnosis_interval": 60
-  }
+  ]
 }
 ```
-
-**Configuration Priority:**
-1. `config.json` (if exists)
-2. Default values in `src/utils/config.py`
-
-**Verifying Configuration:**
-```bash
-# Check what configuration is loaded
-python -c "from src.utils.config import Config; c = Config(); print(f'GPU Cards: {c.GPU_CARDS}')"
-
-# Save current configuration as template
-python -c "from src.utils.config import Config; c = Config(); c.save_template('my_config_template.json')"
-```
-
-### Legacy Configuration
-The original `config.py` hardcoded approach is still supported but deprecated. The new JSON system provides better flexibility for different target machines.
-
 
 ## 🖥️ Usage
 

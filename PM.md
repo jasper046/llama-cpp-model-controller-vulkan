@@ -14,6 +14,8 @@
 - [x] Phase 6: Target Machine Validation (Testing complete - all systems working) ✓
 
 ## 📝 Active Task List
+- [x] Improve UX of `gpu_autodetect_and_config.sh` by asking for main GPU at the end ✓
+- [x] Overhaul `README.md` to recommend script-based configuration ✓
 - [x] Refactor monolithic app.py into modular architecture ✓
 - [x] Separate routes, services, and models into /src directory ✓
 - [x] Update default tensor split to 0.54,0.13,0.33 ✓
@@ -25,7 +27,7 @@
 - [x] Verify GPU monitoring works with actual AMD GPUs ✓
 - [x] Validate llama-server process management ✓
 - [x] Check all Flask routes and frontend integration ✓
-- [ ] Create GPU auto-detection and configuration script (gpu_autodetect_and_config.sh)
+- [x] Create GPU auto-detection and configuration script (gpu_autodetect_and_config.sh) ✓
 
 ## ✅ Critical Issues RESOLVED
 ### 1. ✅ Configuration System IMPROVED
@@ -110,6 +112,58 @@
 ## 🆕 Feature Request: GPU Auto-Detection Script
 **Goal**: Create interactive bash script `gpu_autodetect_and_config.sh` to automate GPU configuration
 
+**CRITICAL REQUIREMENT**: Script must run on Ubuntu Server with **terminal-only interaction**
+- No TUI libraries (whiptail, dialog, etc.)
+- No graphical interfaces
+- Plain terminal I/O only (read -p, echo, etc.)
+- ANSI escape codes for colored output are acceptable
+- Must work in SSH sessions and on headless servers
+
+### Task Breakdown with Subgoals
+
+#### Task 1: Vulkan Device Detection
+- **Subgoal 1.1**: Check if llama-cli is available in PATH
+- **Subgoal 1.2**: Run `llama-cli --list-devices` and capture output
+- **Subgoal 1.3**: Parse Vulkan device list (device ID, name, type)
+- **Subgoal 1.4**: Filter for GPU devices only (exclude CPU, other devices)
+
+#### Task 2: PCIe Slot Mapping
+- **Subgoal 2.1**: Scan `/sys/class/drm/card*` directories
+- **Subgoal 2.2**: Read symlink targets to extract PCIe addresses
+- **Subgoal 2.3**: Parse PCI slot format (e.g., "0000:65:00.0" → "65:00.0")
+- **Subgoal 2.4**: Create mapping between card IDs and PCIe slots
+
+#### Task 3: Device Correlation
+- **Subgoal 3.1**: Match Vulkan device order to card IDs
+- **Subgoal 3.2**: Extract GPU model names from Vulkan output
+- **Subgoal 3.3**: Combine data: card_id + pcie_slot + vulkan_id + model_name
+
+#### Task 4: User Interaction System
+- **Subgoal 4.1**: Display detected GPUs with clear formatting
+- **Subgoal 4.2**: Implement y/n prompts for GPU inclusion
+- **Subgoal 4.3**: Implement main GPU selection (prompt at the end for multi-GPU setups)
+- **Subgoal 4.4**: Implement tensor weight input validation
+- **Subgoal 4.5**: Handle user input errors and retries
+
+#### Task 5: Configuration Generation
+- **Subgoal 5.1**: Check if config.json exists
+- **Subgoal 5.2**: Load existing config.json or create from template
+- **Subgoal 5.3**: Update gpu_cards array with user selections
+- **Subgoal 5.4**: Calculate tensor_split string from user weights
+- **Subgoal 5.5**: Preserve non-GPU settings in existing config
+
+#### Task 6: Validation & Error Handling
+- **Subgoal 6.1**: Validate tensor weights sum (>0 and reasonable)
+- **Subgoal 6.2**: Ensure at least one GPU selected as main
+- **Subgoal 6.3**: Validate JSON syntax before writing
+- **Subgoal 6.4**: Create backup of existing config.json
+
+#### Task 7: Script Robustness
+- **Subgoal 7.1**: Add command line help and usage
+- **Subgoal 7.2**: Handle missing llama-cli gracefully
+- **Subgoal 7.3**: Add dry-run mode to preview changes
+- **Subgoal 7.4**: Add verbose logging option
+
 **Requirements**:
 1. Detect all Vulkan devices on the system using `llama-cli --list-devices`
 2. Match Vulkan devices to their PCIe slots (card1, card2, etc.) via sysfs
@@ -155,6 +209,15 @@
 - Preserve existing config.json settings when updating
 - Create config.json from config_template.json if not exists
 
+### Implementation Status
+- [x] Task 1: Vulkan Device Detection ✓ (Fixed regex for llama-cli output format)
+- [x] Task 2: PCIe Slot Mapping ✓ (Uses sysfs card directories)  
+- [x] Task 3: Device Correlation ✓ (Maps Vulkan IDs to PCIe slots)
+- [x] Task 4: User Interaction System ✓ (Includes dry-run mode support)
+- [x] Task 5: Configuration Generation ✓ (JSON with Python validation)
+- [x] Task 6: Validation & Error Handling ✓ (Tensor weight and main GPU validation)
+- [x] Task 7: Script Robustness ✓ (Command line options, backup, error handling)
+
 ## 📁 Files Created/Modified
 ### New Modular Architecture:
 - `app.py` (68L) - Main entry point with dependency injection
@@ -181,6 +244,14 @@
 - Updated default tensor split to `0.54,0.13,0.33` in:
   - `src/utils/config.py` (Config.DEFAULT_PARAMS)
   - `src/services/settings_service.py` (default_settings)
+
+### GPU Auto-Detection Script:
+- `gpu_autodetect_and_config.sh` - Interactive GPU configuration script (400+ lines)
+  - Vulkan device detection via llama-cli
+  - PCIe slot mapping via sysfs
+  - User interaction for GPU selection and tensor weights
+  - Automatic config.json generation with validation
+  - Backup creation and dry-run support
 
 ## 🔧 Technical Notes
 - **File Size Reduction**: 567L → 68L (88% reduction in main file)
