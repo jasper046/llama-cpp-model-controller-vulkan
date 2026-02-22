@@ -1,17 +1,19 @@
 # 🎯 Project Manager (PM.md)
 
 ## 🏗️ Project Overview
-- **Goal**: Vulkan-enabled web controller for llama.cpp models with AMD GPU support
-- **Stack**: Python/Flask backend, HTML/JS frontend, Vulkan GPU monitoring via sysfs
+- **Goal**: ROCm-enabled web controller for llama.cpp models with AMD GPU support
+- **Stack**: Python/Flask backend, HTML/JS frontend, ROCm GPU monitoring via sysfs
 - **Status**: Modular architecture complete with JSON configuration, ready for target machine testing
 
 ## 🚦 Status Board
-- [x] Phase 1: Planning & Architecture (Vulkan conversion complete)
+- [x] Phase 1: Planning & Architecture (ROCm conversion complete)
 - [x] Phase 2: Core Development (Basic functionality working)
 - [x] Phase 3: Architecture Refactoring (Modular architecture complete) ✓
 - [x] Phase 4: Production Deployment (app.py modularized) ✓
 - [x] Phase 5: Configuration System Improvements (JSON config added) ✓
 - [x] Phase 6: Target Machine Validation (Testing complete - all systems working) ✓
+- [x] Phase 7: ROCm GPU Config Script Fixes (Script working, web app issues remain) ✓
+- [ ] Phase 8: Web Application ROCm Integration (Tensor split logic needs fixing)
 
 ## 📝 Active Task List
 - [x] Improve UX of `gpu_autodetect_and_config.sh` by asking for main GPU at the end ✓
@@ -31,6 +33,13 @@
 - [x] Validate llama-server process management ✓
 - [x] Check all Flask routes and frontend integration ✓
 - [x] Create GPU auto-detection and configuration script (gpu_autodetect_and_config.sh) ✓
+- [x] Fix GPU config script for ROCm support (MI50 + RX 6600 mixed systems) ✓
+- [x] Add MI50-only configuration with correct ROCm environment variables ✓
+- [x] Create test_config.sh for configuration validation ✓
+- [ ] Fix web application tensor split logic (uses cached/wrong values)
+- [ ] Fix `-sm` parameter handling (expects `none/layer/row`, not `"1"`)
+- [ ] Handle `HIP_VISIBLE_DEVICES` ROCm device ID mapping
+- [ ] Fix mixed GPU tensor splitting with ROCm backend
 
 ## ✅ Critical Issues RESOLVED
 ### 1. ✅ Configuration System IMPROVED
@@ -49,6 +58,37 @@
 
 ### 3. ✅ GPU Fan Speed Reading FIXED
 **Problem**: Target machine logs showing repeated `[Errno 22] Invalid argument` errors when reading fan speed from `/sys/class/drm/card1/device/hwmon/hwmon*/fan1_input`
+
+### 4. ✅ GPU Config Script for ROCm FIXED
+**Problem**: `gpu_autodetect_and_config.sh` script failed for ROCm mixed GPU systems (MI50 + RX 6600)
+
+**Root Causes**:
+1. ROCm not detecting GPUs without `HSA_OVERRIDE_GFX_VERSION=9.0.0` for mixed Vega+RDNA2 systems
+2. Device name parsing issues: ROCm reports "AMD Radeon Graphics" instead of "AMD Radeon Instinct MI50"
+3. Tensor split calculation errors with wrong delimiter handling
+4. PCIe slot matching failures due to generic ROCm device names
+
+**Solutions Implemented**:
+1. Updated script to use `HSA_OVERRIDE_GFX_VERSION=9.0.0` for mixed GPU detection
+2. Fixed regex parsing for ROCm output (`ggml_cuda_init:` and `ROCmX:` formats)
+3. Changed delimiter from `:` to `|` to handle GPU names with colons
+4. Enhanced `gpu_models_match()` to handle "AMD Radeon Graphics" ↔ "MI50/VEGA20" matching
+5. Added MI50-only configuration with `HSA_OVERRIDE_GFX_VERSION=9.0.6` and `HIP_VISIBLE_DEVICES=1`
+6. Created `test_config.sh` for configuration validation
+7. Updated `config.py` to load from `config.json` and set ROCm environment variables
+8. Updated `start.sh` to set ROCm environment variables for MI50
+
+**Remaining Issues**:
+1. Web application tensor split logic still buggy (uses cached/wrong values)
+2. `-sm` parameter expects `none/layer/row` but config has `"1"`
+3. `HIP_VISIBLE_DEVICES` changes ROCm device IDs (device 1 becomes device 0 when isolated)
+4. Mixed GPU tensor splitting doesn't work reliably with ROCm
+
+**Workaround**: MI50-only configuration works reliably with:
+- `HIP_VISIBLE_DEVICES=1 HSA_OVERRIDE_GFX_VERSION=9.0.6`
+- No tensor split (single GPU)
+- `-sm none` (not `-sm 1`)
+- `--main-gpu 0` (not `--main-gpu 1` when using `HIP_VISIBLE_DEVICES=1`)
 
 **Solutions Implemented**:
 - **Robust HWMON Path Discovery**: Instead of reading from DRM device path, scan `/sys/class/hwmon/hwmon*` to find correct hwmon device matching the GPU card by comparing device symlinks (same approach as `nvtop`)
@@ -93,14 +133,14 @@
 ## 📍 Development Environment Constraints
 - **Development machine**: This laptop (no AMD GPUs)
 - **Target machine**: Different machine with AMD GPUs required for runtime
-- **Implication**: Cannot test GPU monitoring, llama-server integration, or Vulkan functionality locally
+- **Implication**: Cannot test GPU monitoring, llama-server integration, or ROCm functionality locally
 - **Testing approach**: All testing must be performed on the target machine after deployment
 
 ## 🎯 Next Actions - TARGET MACHINE TESTING
 1. **Target Machine Setup (CRITICAL)**:
    - **IMPORTANT**: App runs on different machine than this laptop (AMD GPUs required)
    - Copy `config_template.json` to `config.json` on target machine
-   - Update GPU card IDs, display names, and Vulkan IDs in `config.json`
+   - Update GPU card IDs, display names, and ROCm IDs in `config.json`
    - Adjust sysfs paths if needed for specific AMD GPU model
 
 2. **Test Commands for Target Machine**:
@@ -145,10 +185,10 @@
 
 ### Task Breakdown with Subgoals
 
-#### Task 1: Vulkan Device Detection
+#### Task 1: ROCm Device Detection
 - **Subgoal 1.1**: Check if llama-cli is available in PATH
 - **Subgoal 1.2**: Run `llama-cli --list-devices` and capture output
-- **Subgoal 1.3**: Parse Vulkan device list (device ID, name, type)
+- **Subgoal 1.3**: Parse ROCm device list (device ID, name, type)
 - **Subgoal 1.4**: Filter for GPU devices only (exclude CPU, other devices)
 
 #### Task 2: PCIe Slot Mapping
@@ -158,8 +198,8 @@
 - **Subgoal 2.4**: Create mapping between card IDs and PCIe slots
 
 #### Task 3: Device Correlation
-- **Subgoal 3.1**: Match Vulkan device order to card IDs
-- **Subgoal 3.2**: Extract GPU model names from Vulkan output
+- **Subgoal 3.1**: Match ROCm device order to card IDs
+- **Subgoal 3.2**: Extract GPU model names from ROCm output
 - **Subgoal 3.3**: Combine data: card_id + pcie_slot + vulkan_id + model_name
 
 #### Task 4: User Interaction System
@@ -189,8 +229,8 @@
 - **Subgoal 7.4**: Add verbose logging option
 
 **Requirements**:
-1. Detect all Vulkan devices on the system using `llama-cli --list-devices`
-2. Match Vulkan devices to their PCIe slots (card1, card2, etc.) via sysfs
+1. Detect all ROCm devices on the system using `llama-cli --list-devices`
+2. Match ROCm devices to their PCIe slots (card1, card2, etc.) via sysfs
 3. For each detected GPU, prompt user:
    - Include this GPU for model running? (y/n)
    - If yes: Is this the main GPU? (y/n)
@@ -204,10 +244,10 @@
 ./gpu_autodetect_and_config.sh
 
 # Script interaction example:
-# Found 3 Vulkan devices:
-# 1. card1 (PCIe 65:00.0) -> Vulkan ID 1 - AMD Radeon RX 550
-# 2. card2 (PCIe b5:00.0) -> Vulkan ID 2 - AMD Radeon RX 470
-# 3. card3 (PCIe 03:00.0) -> Vulkan ID 0 - AMD Radeon RX 6600
+# Found 3 ROCm devices:
+# 1. card1 (PCIe 65:00.0) -> ROCm ID 1 - AMD Radeon RX 550
+# 2. card2 (PCIe b5:00.0) -> ROCm ID 2 - AMD Radeon RX 470
+# 3. card3 (PCIe 03:00.0) -> ROCm ID 0 - AMD Radeon RX 6600
 #
 # Include card1 (RX 550)? (y/n): y
 # Is card1 the main GPU? (y/n): n
@@ -225,18 +265,18 @@
 ```
 
 **Technical Approach**:
-- Use `llama-cli --list-devices` to get Vulkan device list
+- Use `llama-cli --list-devices` to get ROCm device list
 - Parse `/sys/class/drm/card*` symlinks to get PCIe slot info
 - Extract PCI slot from device path: `../../devices/pci0000:00/0000:65:00.0/...`
-- Match Vulkan device order to card IDs
+- Match ROCm device order to card IDs
 - Validate tensor weights sum to reasonable value (warn if not)
 - Preserve existing config.json settings when updating
 - Create config.json from config_template.json if not exists
 
 ### Implementation Status
-- [x] Task 1: Vulkan Device Detection ✓ (Fixed regex for llama-cli output format)
+- [x] Task 1: ROCm Device Detection ✓ (Fixed regex for llama-cli output format)
 - [x] Task 2: PCIe Slot Mapping ✓ (Uses sysfs card directories)  
-- [x] Task 3: Device Correlation ✓ (Maps Vulkan IDs to PCIe slots)
+- [x] Task 3: Device Correlation ✓ (Maps ROCm IDs to PCIe slots)
 - [x] Task 4: User Interaction System ✓ (Includes dry-run mode support)
 - [x] Task 5: Configuration Generation ✓ (JSON with Python validation)
 - [x] Task 6: Validation & Error Handling ✓ (Tensor weight and main GPU validation)
@@ -271,7 +311,7 @@
 
 ### GPU Auto-Detection Script:
 - `gpu_autodetect_and_config.sh` - Interactive GPU configuration script (400+ lines)
-  - Vulkan device detection via llama-cli
+  - ROCm device detection via llama-cli
   - PCIe slot mapping via sysfs
   - User interaction for GPU selection and tensor weights
   - Automatic config.json generation with validation
