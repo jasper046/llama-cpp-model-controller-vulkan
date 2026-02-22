@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # GPU Auto-Detection and Configuration Script
-# for llama.cpp Model Controller (Vulkan Edition)
+# for llama.cpp Model Controller (ROCm Edition)
 #
-# This script detects AMD GPUs via Vulkan and sysfs,
+# This script detects AMD GPUs via ROCm and sysfs,
 # then creates/updates config.json with user preferences
 #
 # COMPATIBILITY REQUIREMENTS:
@@ -32,8 +32,8 @@ NC='\033[0m' # No Color
 VERBOSE=false
 DRY_RUN=false
 LLAMA_CLI=""
-GPUS=()
-SELECTED_GPUS=()
+ROCM_GPUS=()
+SELECTED_ROCM_GPUS=()
 
 # Logging functions
 log_info() {
@@ -59,14 +59,14 @@ log_verbose() {
 }
 
 # Function to check if two GPU model names refer to the same GPU
-# Extracts key identifiers like "RX 6600", "RX 470", etc.
+# Extracts key identifiers like "RX 6600", "RX 470", "MI50", etc.
 gpu_models_match() {
     local model1="$1"
     local model2="$2"
 
-    # Extract common identifiers: RX + number, R9 + number, etc.
-    local id1=$(echo "$model1" | grep -oE "(RX|R9|R7|R5)[[:space:]]*[0-9]+" | tr -d ' ')
-    local id2=$(echo "$model2" | grep -oE "(RX|R9|R7|R5)[[:space:]]*[0-9]+" | tr -d ' ')
+    # Extract common identifiers: RX + number, R9 + number, MI + number, etc.
+    local id1=$(echo "$model1" | grep -oE "(RX|R9|R7|R5|MI|WX|PRO)[[:space:]]*[0-9]+" | tr -d ' ')
+    local id2=$(echo "$model2" | grep -oE "(RX|R9|R7|R5|MI|WX|PRO)[[:space:]]*[0-9]+" | tr -d ' ')
 
     # If both have identifiers, compare them
     if [[ -n "$id1" ]] && [[ -n "$id2" ]]; then
@@ -83,6 +83,31 @@ gpu_models_match() {
             return 0
         fi
     fi
+
+    # Check for "Instinct" series (MI50, MI100, etc.)
+    if [[ "$model1" == *"Instinct"* ]] && [[ "$model2" == *"Instinct"* ]]; then
+        # Extract MI number from both
+        local mi1=$(echo "$model1" | grep -oE "MI[0-9]+")
+        local mi2=$(echo "$model2" | grep -oE "MI[0-9]+")
+        if [[ -n "$mi1" ]] && [[ -n "$mi2" ]] && [[ "$mi1" == "$mi2" ]]; then
+            return 0
+        fi
+    fi
+    
+    # Handle case where ROCm reports generic names like "AMD Radeon Graphics" for MI50
+    # Check if one is "AMD Radeon Graphics" and the other contains "MI50" or "VEGA20"
+    if [[ "$model1" == *"Radeon Graphics"* ]] && [[ "$model2" == *"MI50"* ]] || [[ "$model2" == *"VEGA20"* ]]; then
+        return 0
+    fi
+    if [[ "$model2" == *"Radeon Graphics"* ]] && [[ "$model1" == *"MI50"* ]] || [[ "$model1" == *"VEGA20"* ]]; then
+        return 0
+    fi
+    
+    # Handle case where both have same architecture but different names
+    # (e.g., both show as gfx900 due to HSA_OVERRIDE_GFX_VERSION=9.0.0)
+    # If we can't match by name but both are AMD GPUs detected in the same system,
+    # we should match them based on PCIe slot order or other heuristics
+    # This is handled in the map_pcie_slots function
 
     # Fallback: check for partial match (one is substring of other)
     if [[ "$model1" == *"$model2"* ]] || [[ "$model2" == *"$model1"* ]]; then
@@ -172,7 +197,7 @@ OPTIONS:
     -h, --help        Show this help message
 
 DESCRIPTION:
-    This script detects AMD GPUs via Vulkan and sysfs, then helps you configure
+    This script detects AMD GPUs via ROCm and sysfs, then helps you configure
     them for use with llama.cpp model controller. It will create or update
     config.json with your GPU selections and tensor split preferences.
 
@@ -213,6 +238,22 @@ parse_args() {
 check_llama_cli() {
     log_info "Checking for llama-cli..."
     
+    # First check for ROCm-built llama-cli in common build locations
+    local rocm_build_paths=(
+        "/home/cotg/llmstuff/llama.cpp/build-rocm/bin/llama-cli"
+        "/home/cotg/llmstuff/llama.cpp/build/bin/llama-cli"
+        "/home/cotg/llmstuff/llama.cpp/build-rocm-simple/bin/llama-cli"
+    )
+    
+    for build_path in "${rocm_build_paths[@]}"; do
+        if [[ -f "$build_path" ]]; then
+            LLAMA_CLI="$build_path"
+            log_success "Found ROCm-built llama-cli at $build_path"
+            return 0
+        fi
+    done
+    
+    # Then check standard locations
     if command -v llama-cli &> /dev/null; then
         LLAMA_CLI="llama-cli"
         log_success "Found llama-cli in PATH"
@@ -227,46 +268,97 @@ check_llama_cli() {
         return 0
     else
         log_error "llama-cli not found. Please install llama.cpp or add llama-cli to PATH."
-        log_error "Expected locations: /usr/local/bin/llama-cli, /usr/bin/llama-cli, or in PATH"
+        log_error "Expected locations:"
+        log_error "  - ROCm build: /home/cotg/llmstuff/llama.cpp/build-rocm/bin/llama-cli"
+        log_error "  - System: /usr/local/bin/llama-cli, /usr/bin/llama-cli, or in PATH"
+        log_error "  - Or rebuild with: cd ~/llmstuff/llama.cpp && mkdir -p build-rocm && cd build-rocm"
+        log_error "    HIPCXX=\"\$(hipconfig -l)/clang\" HIP_PATH=\"\$(hipconfig -R)\" cmake .. \\"
+        log_error "      -DGGML_HIP=ON -DAMDGPU_TARGETS=\"gfx906;gfx1030\" \\"
+        log_error "      -DCMAKE_BUILD_TYPE=Release -DLLAMA_CURL=ON"
+        log_error "    cmake --build . --config Release -j \$(nproc)"
         exit 1
     fi
 }
 
-# Task 1.2-1.4: Detect Vulkan devices
-detect_vulkan_devices() {
-    log_info "Detecting Vulkan devices..."
+# Task 1.2-1.4: Detect ROCm devices
+detect_rocm_devices() {
+    log_info "Detecting ROCm devices..."
 
-    # Run llama-cli and capture output (allow non-zero exit codes)
-    vulkan_output=$("$LLAMA_CLI" --list-devices 2>&1) || true
-
-    if [[ -z "$vulkan_output" ]]; then
-        log_error "Failed to run llama-cli --list-devices"
-        log_error "Make sure Vulkan is properly installed and your GPUs are supported"
-        exit 1
+    # Set ROCm environment variables for device detection
+    # HSA_OVERRIDE_GFX_VERSION=9.0.0 is needed for MI50 (Vega 20) and mixed GPU systems
+    # ROCBLAS_USE_HIPBLASLT=1 enables hipBLASLt for better performance
+    local rocm_output=""
+    
+    # For mixed GPU systems (MI50 Vega 20 + RX 6600 Navi 23), we need HSA_OVERRIDE_GFX_VERSION=9.0.0
+    # This forces GFX9 (Vega) compatibility mode for all GPUs
+    log_verbose "Using ROCm environment: HSA_OVERRIDE_GFX_VERSION=9.0.0 ROCBLAS_USE_HIPBLASLT=1"
+    rocm_output=$(HSA_OVERRIDE_GFX_VERSION=9.0.0 ROCBLAS_USE_HIPBLASLT=1 "$LLAMA_CLI" --list-devices 2>&1) || true
+    
+    # Check if we got any GPU devices in the output
+    if [[ -n "$rocm_output" ]] && echo "$rocm_output" | grep -q -E "(AMD|Radeon|NVIDIA|GeForce|Intel|Arc)"; then
+        log_verbose "Successfully detected GPUs with HSA_OVERRIDE_GFX_VERSION=9.0.0"
+        log_verbose "ROCm device list output:"
+        log_verbose "$rocm_output"
+    else
+        log_error "Failed to detect GPUs via ROCm with HSA_OVERRIDE_GFX_VERSION=9.0.0"
+        log_error "Trying alternative HSA_OVERRIDE_GFX_VERSION values..."
+        
+        # Try alternative values
+        local hsa_versions=("8.0.0" "10.0.0" "9.0.6" "")
+        for hsa_version in "${hsa_versions[@]}"; do
+            if [[ -n "$hsa_version" ]]; then
+                log_verbose "Trying HSA_OVERRIDE_GFX_VERSION=$hsa_version"
+                rocm_output=$(HSA_OVERRIDE_GFX_VERSION="$hsa_version" ROCBLAS_USE_HIPBLASLT=1 "$LLAMA_CLI" --list-devices 2>&1) || true
+            else
+                log_verbose "Trying without HSA_OVERRIDE_GFX_VERSION"
+                rocm_output=$(ROCBLAS_USE_HIPBLASLT=1 "$LLAMA_CLI" --list-devices 2>&1) || true
+            fi
+            
+            if [[ -n "$rocm_output" ]] && echo "$rocm_output" | grep -q -E "(AMD|Radeon|NVIDIA|GeForce|Intel|Arc)"; then
+                log_verbose "Successfully detected GPUs with HSA_OVERRIDE_GFX_VERSION=${hsa_version:-not set}"
+                break
+            fi
+        done
+        
+        if [[ -z "$rocm_output" ]] || ! echo "$rocm_output" | grep -q -E "(AMD|Radeon|NVIDIA|GeForce|Intel|Arc)"; then
+            log_error "Failed to detect GPUs via ROCm"
+            log_error "Make sure ROCm is properly installed and your GPUs are supported"
+            log_verbose "Last attempt output:"
+            log_verbose "$rocm_output"
+            # Don't exit yet - continue to diagnostics
+        else
+            log_verbose "ROCm device list output:"
+            log_verbose "$rocm_output"
+        fi
     fi
     
-    log_verbose "Vulkan device list output:"
-    log_verbose "$vulkan_output"
-    
-    # Parse Vulkan devices - use simpler approach to avoid issues
+    # Parse ROCm devices - use simpler approach to avoid issues
     local device_count=0
     
     # Save output to temp variable first
-    local output="$vulkan_output"
+    local output="$rocm_output"
     
     # Process using file to avoid here-string issues
     local temp_file=$(mktemp)
     echo "$output" > "$temp_file"
     
     while IFS= read -r line; do
-        if [[ $line =~ ggml_vulkan:[[:space:]]+([0-9]+)[[:space:]]*=[[:space:]]*(.+)$ ]]; then
+        # Parse ggml_cuda_init: lines (ROCm backend)
+        if [[ $line =~ ggml_cuda_init:[[:space:]]+found[[:space:]]+([0-9]+)[[:space:]]+ROCm[[:space:]]+devices: ]]; then
+            continue  # Skip header line
+        fi
+        
+        # Parse device lines like: "  Device 0: AMD Radeon RX 6600, gfx900:xnack- (0x900), VMM: no, Wave Size: 32"
+        if [[ $line =~ ^[[:space:]]+Device[[:space:]]+([0-9]+):[[:space:]]+(.+),[[:space:]]+gfx ]]; then
             local device_id="${BASH_REMATCH[1]}"
             local device_full_name="${BASH_REMATCH[2]}"
-            local device_name=$(echo "$device_full_name" | cut -d'|' -f1 | sed 's/ *$//')
+            
+            # Clean up the device name - remove leading/trailing spaces
+            local device_name=$(echo "$device_full_name" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
             
             if [[ $device_name =~ (AMD|Radeon|NVIDIA|GeForce|Intel|Arc) ]]; then
-                log_verbose "Found GPU device: ID=$device_id, Name=$device_name"
-                GPUS+=("$device_id:$device_name")
+                log_verbose "Found GPU device (ggml_cuda_init): ID=$device_id, Name='$device_name'"
+                ROCM_GPUS+=("$device_id:$device_name")
                 ((device_count++)) || true
             fi
         fi
@@ -275,37 +367,145 @@ detect_vulkan_devices() {
     rm -f "$temp_file"
     
     # Fallback: try to parse "Available devices:" section if above failed
-    if [[ ${#GPUS[@]} -eq 0 ]]; then
+    if [[ ${#ROCM_GPUS[@]} -eq 0 ]]; then
         log_verbose "Trying alternative parsing for Available devices section..."
         
         while IFS= read -r line; do
-            # Parse lines like: "  Vulkan0: AMD Radeon RX 6600 (RADV NAVI23) (8176 MiB, 8128 MiB free)"
-            if [[ $line =~ ^\ +Vulkan([0-9]+):\ (.+)$ ]]; then
+            # Parse lines like: "  ROCm0: AMD Radeon RX 6600 (8176 MiB, 8152 MiB free)"
+            if [[ $line =~ ^[[:space:]]+ROCm([0-9]+):[[:space:]]+(.+)$ ]]; then
                 local device_id="${BASH_REMATCH[1]}"
                 local device_full_name="${BASH_REMATCH[2]}"
                 
-                # Extract clean GPU name
-                local device_name=$(echo "$device_full_name" | sed 's/ (.*//')
+                # Extract clean GPU name (remove memory info in parentheses)
+                local device_name=$(echo "$device_full_name" | sed 's/ ([^)]*)[^)]*$//')
+                device_name=$(echo "$device_name" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
                 
                 # Check if it's a GPU device
                 if [[ $device_name =~ (AMD|Radeon|NVIDIA|GeForce|Intel|Arc) ]]; then
-                    log_verbose "Found GPU device (alt): ID=$device_id, Name=$device_name"
-                    GPUS+=("$device_id:$device_name")
+                    log_verbose "Found GPU device (ROCm): ID=$device_id, Name='$device_name'"
+                    ROCM_GPUS+=("$device_id:$device_name")
                     ((device_count++)) || true
                 fi
             fi
-        done < <(echo "$vulkan_output")
+        done < <(echo "$rocm_output")
     fi
-    
-    if [[ ${#GPUS[@]} -eq 0 ]]; then
-        log_error "No GPU devices found via Vulkan"
+
+    # Third attempt: Generic parsing for any GPU vendor names
+    if [[ ${#ROCM_GPUS[@]} -eq 0 ]]; then
+        log_verbose "Trying generic GPU parsing..."
+
+        while IFS= read -r line; do
+            # Look for GPU vendor names anywhere in line
+            if [[ $line =~ (AMD|Radeon|NVIDIA|GeForce|Intel|Arc) ]]; then
+                # Try to extract device ID - look for number at beginning of line or before colon
+                local device_id=""
+                local device_name=""
+
+                # Pattern 1: "  ROCm0: AMD Radeon ..." or "  HIP0: AMD Radeon ..."
+                if [[ $line =~ ^[[:space:]]*(ROCm|HIP|Device|GPU)([0-9]+)[[:space:]]*:[[:space:]]*(.+) ]]; then
+                    device_id="${BASH_REMATCH[2]}"
+                    device_name="${BASH_REMATCH[3]}"
+                # Pattern 2: "  0: AMD Radeon ..."
+                elif [[ $line =~ ^[[:space:]]*([0-9]+)[[:space:]]*:[[:space:]]*(.+) ]]; then
+                    device_id="${BASH_REMATCH[1]}"
+                    device_name="${BASH_REMATCH[2]}"
+                # Pattern 3: Any line with GPU vendor name
+                else
+                    # Use line number as pseudo ID
+                    device_id="${#ROCM_GPUS[@]}"
+                    device_name="$line"
+                fi
+
+                # Clean up device name - remove memory info in parentheses
+                device_name=$(echo "$device_name" | sed 's/ ([^)]*)[^)]*$//' | sed 's/ *$//')
+
+                log_verbose "Found GPU device (generic): ID=$device_id, Name=$device_name"
+                ROCM_GPUS+=("$device_id:$device_name")
+            fi
+        done < <(echo "$rocm_output")
+    fi
+
+    if [[ ${#ROCM_GPUS[@]} -eq 0 ]]; then
+        log_error "No GPU devices found via ROCm"
         log_error "Raw output from llama-cli --list-devices:"
-        echo "$vulkan_output" >&2
-        log_error "Please check your Vulkan installation and GPU drivers"
+        echo "$rocm_output" >&2
+
+        # Run additional diagnostics
+        log_info "Running additional diagnostics..."
+
+        # Check for rocminfo
+        if command -v rocminfo &> /dev/null; then
+            log_info "Checking ROCm devices via rocminfo..."
+            rocminfo_output=$(rocminfo 2>&1 | head -50)
+            if [[ $? -eq 0 ]]; then
+                log_verbose "rocminfo output (first 50 lines):"
+                log_verbose "$rocminfo_output"
+                if echo "$rocminfo_output" | grep -q "Agent"; then
+                    log_info "rocminfo found ROCm agents"
+                else
+                    log_warn "rocminfo did not find any ROCm agents"
+                fi
+            fi
+        else
+            log_warn "rocminfo not found. Install ROCm for better diagnostics."
+        fi
+
+        # Check sysfs for GPU devices
+        log_info "Checking sysfs for GPU devices..."
+        local sysfs_gpus=($(ls -d /sys/class/drm/card[0-9]* 2>/dev/null | grep -v "card[0-9]*-" | sort -V))
+        if [[ ${#sysfs_gpus[@]} -gt 0 ]]; then
+            log_info "Found ${#sysfs_gpus[@]} GPU(s) in sysfs:"
+            for gpu_path in "${sysfs_gpus[@]}"; do
+                local card_name=$(basename "$gpu_path")
+                local vendor_path="$gpu_path/device/vendor"
+                local device_path="$gpu_path/device/device"
+                local vendor_id="unknown"
+                local device_id="unknown"
+
+                if [[ -f "$vendor_path" ]]; then
+                    vendor_id=$(cat "$vendor_path" 2>/dev/null | head -1 || echo "unknown")
+                fi
+                if [[ -f "$device_path" ]]; then
+                    device_id=$(cat "$device_path" 2>/dev/null | head -1 || echo "unknown")
+                fi
+
+                log_info "  - $card_name: Vendor: $(printf '0x%04x' $((vendor_id)) 2>/dev/null || echo $vendor_id), Device: $(printf '0x%04x' $((device_id)) 2>/dev/null || echo $device_id)"
+            done
+        else
+            log_warn "No GPU devices found in /sys/class/drm/"
+        fi
+
+        # Check user groups for GPU access
+        log_info "Checking user permissions..."
+        if groups | grep -q "render" || groups | grep -q "video"; then
+            log_info "User is in render/video group(s)"
+        else
+            log_warn "User is NOT in 'render' or 'video' groups. GPU access may be limited."
+            log_warn "Add your user to these groups: sudo usermod -aG render,video $USER"
+        fi
+
+        # MI50 + RX 6600 mixed system guidance
+        log_info "MI50 (Vega 20) + RX 6600 (Navi 23) mixed system notes:"
+        log_info "1. MI50 requires ROCm 5.x or later, RX 6600 requires ROCm 5.4+"
+        log_info "2. HSA_OVERRIDE_GFX_VERSION=9.0.0 is needed for mixed GPU systems"
+        log_info "3. MI50 is gfx906 (Vega 20), RX 6600 is gfx1032 (Navi 23)"
+        log_info "4. Check dmesg for GPU initialization errors"
+        log_info "5. Ensure llama.cpp is built with ROCm support: -DGGML_HIP=ON -DAMDGPU_TARGETS=\"gfx906;gfx1030\""
+
+        log_error ""
+        log_error "Possible solutions for mixed GPU system:"
+        log_error "1. Ensure ROCm 6.2+ is properly installed: https://rocm.docs.amd.com"
+        log_error "2. Use HSA_OVERRIDE_GFX_VERSION=9.0.0 for mixed Vega + RDNA2 systems"
+        log_error "3. Rebuild llama.cpp with: -DGGML_HIP=ON -DAMDGPU_TARGETS=\"gfx906;gfx1030\""
+        log_error "4. Check ROCm detects GPUs: HSA_OVERRIDE_GFX_VERSION=9.0.0 rocminfo"
+        log_error "5. Run 'dmesg | grep -i amd' to check for GPU errors"
+        log_error "6. For MI50 issues, try: HSA_OVERRIDE_GFX_VERSION=9.0.6"
+        log_error "7. For RX 6600 issues, try: HSA_OVERRIDE_GFX_VERSION=10.3.2"
+
         exit 1
     fi
     
-    log_success "Found ${#GPUS[@]} GPU device(s) via Vulkan"
+    log_success "Found ${#ROCM_GPUS[@]} GPU device(s) via ROCm"
 }
 
 # Task 2: PCIe Slot Mapping (with PCI ID-based matching)
@@ -350,7 +550,7 @@ map_pcie_slots() {
         fi
     done
 
-    # Match cards to Vulkan devices using GPU model names
+    # Match cards to ROCm devices using GPU model names
     local gpu_config=()
 
     for card_mapping in "${pcie_mapping[@]}"; do
@@ -358,35 +558,35 @@ map_pcie_slots() {
         local pcie_slot=$(echo "$card_mapping" | cut -d: -f2)
         local card_gpu_model=$(echo "$card_mapping" | cut -d: -f3-)
 
-        # Try to find matching Vulkan device by GPU name
+        # Try to find matching ROCm device by GPU name
         local matched=false
-        for vulkan_gpu_info in "${GPUS[@]}"; do
-            local vulkan_id=$(echo "$vulkan_gpu_info" | cut -d: -f1)
-            local vulkan_gpu_name=$(echo "$vulkan_gpu_info" | cut -d: -f2-)
+        for rocm_gpu_info in "${ROCM_GPUS[@]}"; do
+            local rocm_id=$(echo "$rocm_gpu_info" | cut -d: -f1)
+            local rocm_gpu_name=$(echo "$rocm_gpu_info" | cut -d: -f2-)
 
             # Use smart matching function
-            if gpu_models_match "$card_gpu_model" "$vulkan_gpu_name"; then
-                gpu_config+=("$card_id:$pcie_slot:$vulkan_id:$vulkan_gpu_name")
-                log_verbose "Matched $card_id ($card_gpu_model) to Vulkan ID $vulkan_id ($vulkan_gpu_name)"
+            if gpu_models_match "$card_gpu_model" "$rocm_gpu_name"; then
+                gpu_config+=("$card_id:$pcie_slot:$rocm_id:$rocm_gpu_name")
+                log_verbose "Matched $card_id ($card_gpu_model) to ROCm ID $rocm_id ($rocm_gpu_name)"
                 matched=true
                 break
             fi
         done
 
         if [[ "$matched" == false ]]; then
-            log_error "Could not match $card_id ($card_gpu_model) to any Vulkan device."
-            log_error "This usually indicates a problem with Vulkan drivers reporting incorrect GPU names."
+            log_error "Could not match $card_id ($card_gpu_model) to any ROCm device."
+            log_error "This usually indicates a problem with ROCm drivers reporting incorrect GPU names."
             exit 1
         fi
     done
 
-    GPUS=("${gpu_config[@]}")
-    log_success "Mapped ${#GPUS[@]} GPUs to PCIe slots"
+    ROCM_GPUS=("${gpu_config[@]}")
+    log_success "Mapped ${#ROCM_GPUS[@]} GPUs to PCIe slots"
 
-    # Sort GPUs by Vulkan ID so user sees them in Vulkan order
-    IFS=$'\n' GPUS=($(sort -t: -k3 -n <<<"${GPUS[*]}"))
+    # Sort GPUs by ROCm ID so user sees them in ROCm order
+    IFS=$'\n' ROCM_GPUS=($(sort -t: -k3 -n <<<"${ROCM_GPUS[*]}"))
     unset IFS
-    log_verbose "GPUs sorted by Vulkan ID for user interaction"
+    log_verbose "GPUs sorted by ROCm ID for user interaction"
 }
 
 # Task 4: User Interaction
@@ -398,7 +598,7 @@ prompt_user_selection() {
         
         # Auto-select all GPUs with default weights for dry-run
         local gpu_index=0
-        for gpu_info in "${GPUS[@]}"; do
+        for gpu_info in "${ROCM_GPUS[@]}"; do
             local card_id=$(echo "$gpu_info" | cut -d: -f1)
             local gpu_name=$(echo "$gpu_info" | cut -d: -f4-)
             
@@ -413,7 +613,7 @@ prompt_user_selection() {
                 tensor_weight="0.13"
             fi
             
-            SELECTED_GPUS+=("$gpu_info:$is_main:$tensor_weight")
+            SELECTED_ROCM_GPUS+=("$gpu_info|$is_main|$tensor_weight")
             log_info "DRY-RUN: Would select $card_id ($gpu_name) - main=$is_main, weight=$tensor_weight"
             ((gpu_index++)) || true
         done
@@ -424,13 +624,13 @@ prompt_user_selection() {
     echo
     
     local index=0
-    for gpu_info in "${GPUS[@]}"; do
+    for gpu_info in "${ROCM_GPUS[@]}"; do
         local card_id=$(echo "$gpu_info" | cut -d: -f1)
         local pcie_slot=$(echo "$gpu_info" | cut -d: -f2)
-        local vulkan_id=$(echo "$gpu_info" | cut -d: -f3)
+        local rocm_id=$(echo "$gpu_info" | cut -d: -f3)
         local gpu_name=$(echo "$gpu_info" | cut -d: -f4-)
         
-        echo "$((index+1)). $card_id (PCIe $pcie_slot) -> Vulkan ID $vulkan_id - $gpu_name"
+        echo "$((index+1)). $card_id (PCIe $pcie_slot) -> ROCm ID $rocm_id - $gpu_name"
         ((index++)) || true
     done
     
@@ -440,7 +640,7 @@ prompt_user_selection() {
     local temp_selected_gpus=()
     local temp_tensor_weights=()
 
-    for gpu_info in "${GPUS[@]}"; do
+    for gpu_info in "${ROCM_GPUS[@]}"; do
         local card_id=$(echo "$gpu_info" | cut -d: -f1)
         local gpu_name=$(echo "$gpu_info" | cut -d: -f4-)
         
@@ -503,7 +703,8 @@ prompt_user_selection() {
         done
     fi
 
-    # Now, populate SELECTED_GPUS in the format generate_config expects
+    # Now, populate SELECTED_ROCM_GPUS in the format generate_config expects
+    # Use | as delimiter since GPU names may contain colons
     local i=0
     for gpu_info in "${temp_selected_gpus[@]}"; do
         local is_main="n"
@@ -512,11 +713,11 @@ prompt_user_selection() {
         fi
         
         local tensor_weight="${temp_tensor_weights[$i]}"
-        SELECTED_GPUS+=("$gpu_info:$is_main:$tensor_weight")
+        SELECTED_ROCM_GPUS+=("$gpu_info|$is_main|$tensor_weight")
         ((i++)) || true
     done
     
-    log_success "Selected ${#SELECTED_GPUS[@]} GPU(s) for configuration"
+    log_success "Selected ${#SELECTED_ROCM_GPUS[@]} GPU(s) for configuration"
 }
 
 # Task 5-6: Configuration Generation and Validation
@@ -541,23 +742,23 @@ generate_config() {
         fi
     fi
     
-    # Sort selected GPUs by Vulkan ID (so tensor split makes sense)
-    IFS=$'\n' SORTED_GPUS=($(sort -t: -k3 -n <<<"${SELECTED_GPUS[*]}"))
+    # Sort selected GPUs by ROCm ID (so tensor split makes sense)
+    IFS=$'\n' SORTED_ROCM_GPUS=($(sort -t: -k3 -n <<<"${SELECTED_ROCM_GPUS[*]}"))
     unset IFS
 
-    # Generate GPU configuration in Vulkan order
+    # Generate GPU configuration in ROCm order
     local gpu_cards="["
     local tensor_parts=()
-    local main_gpu_vulkan_id=""
+    local main_gpu_rocm_id=""
 
     local gpu_index=0
-    for selected_gpu in "${SORTED_GPUS[@]}"; do
-        local card_id=$(echo "$selected_gpu" | cut -d: -f1)
-        local pcie_slot=$(echo "$selected_gpu" | cut -d: -f2)
-        local vulkan_id=$(echo "$selected_gpu" | cut -d: -f3)
-        local gpu_name=$(echo "$selected_gpu" | cut -d: -f4)
-        local is_main=$(echo "$selected_gpu" | cut -d: -f5)
-        local tensor_weight=$(echo "$selected_gpu" | cut -d: -f6)
+    for selected_gpu in "${SORTED_ROCM_GPUS[@]}"; do
+        local card_id=$(echo "$selected_gpu" | cut -d'|' -f1 | cut -d: -f1)
+        local pcie_slot=$(echo "$selected_gpu" | cut -d'|' -f1 | cut -d: -f2)
+        local rocm_id=$(echo "$selected_gpu" | cut -d'|' -f1 | cut -d: -f3)
+        local gpu_name=$(echo "$selected_gpu" | cut -d'|' -f1 | cut -d: -f4-)
+        local is_main=$(echo "$selected_gpu" | cut -d'|' -f2)
+        local tensor_weight=$(echo "$selected_gpu" | cut -d'|' -f3)
         
         # Add comma for all but first element
         if [[ $gpu_index -gt 0 ]]; then
@@ -569,7 +770,7 @@ generate_config() {
     {
       "card_id": "$card_id",
       "display_name": "$gpu_name",
-      "vulkan_id": $vulkan_id,
+      "rocm_id": $rocm_id,
       "sysfs_base": "/sys/class/drm/$card_id/device",
       "hwmon_pattern": "hwmon/hwmon*"
     }
@@ -579,9 +780,9 @@ EOF
         # Collect tensor weights
         tensor_parts+=("$tensor_weight")
         
-        # Store main GPU Vulkan ID (use first one found)
-        if [[ "$is_main" == "y" && -z "$main_gpu_vulkan_id" ]]; then
-            main_gpu_vulkan_id="$vulkan_id"
+        # Store main GPU ROCm ID (use first one found)
+        if [[ "$is_main" == "y" && -z "$main_gpu_rocm_id" ]]; then
+            main_gpu_rocm_id="$rocm_id"
         fi
         
         ((gpu_index++)) || true
@@ -592,9 +793,32 @@ EOF
     # Generate tensor_split string
     local tensor_split=$(IFS=,; echo "${tensor_parts[*]}")
     
+    # Debug: show tensor parts
+    log_verbose "Tensor parts: ${tensor_parts[*]}"
+    log_verbose "Tensor split: $tensor_split"
+    
     # Validate tensor weights
-    local total_weight=$(echo "${tensor_parts[*]}" | tr ' ' '+' | bc -l 2>/dev/null || echo "1.0")
+    local total_weight=0
+    for weight in "${tensor_parts[@]}"; do
+        if [[ -n "$weight" ]] && [[ "$weight" =~ ^[0-9]*\.?[0-9]+$ ]]; then
+            total_weight=$(echo "$total_weight + $weight" | bc -l 2>/dev/null || echo "$total_weight")
+        else
+            log_warn "Invalid tensor weight: '$weight'"
+        fi
+    done
+    
     log_verbose "Total tensor weight: $total_weight"
+    
+    # Warn if total weight is not close to 1.0
+    if [[ "$DRY_RUN" != true ]]; then
+        local weight_diff=$(echo "scale=2; $total_weight - 1.0" | bc -l 2>/dev/null || echo "0")
+        local abs_diff=$(echo "scale=2; sqrt($weight_diff^2)" | bc -l 2>/dev/null || echo "0")
+        if (( $(echo "$abs_diff > 0.5" | bc -l 2>/dev/null) )); then
+            log_warn "Total tensor weight ($total_weight) is significantly different from 1.0"
+            log_warn "For optimal performance, tensor weights should sum to approximately 1.0"
+            log_warn "Example: For 2 GPUs, use weights like 0.7 and 0.3 (sums to 1.0)"
+        fi
+    fi
     
     # Create updated config JSON (using python for proper JSON handling)
     local temp_config=$(mktemp)
@@ -610,7 +834,7 @@ with open('$CONFIG_FILE', 'r') as f:
 # Update GPU configuration
 config['gpu_configuration']['gpu_cards'] = json.loads('''$gpu_cards''')
 config['default_parameters']['tensor_split'] = '$tensor_split'
-config['default_parameters']['main_gpu'] = '$main_gpu_vulkan_id'
+config['default_parameters']['main_gpu'] = '$main_gpu_rocm_id'
 
 # Write updated config
 with open('$temp_config', 'w') as f:
@@ -623,7 +847,7 @@ EOF
         mv "$temp_config" "$CONFIG_FILE"
         log_success "Configuration saved to $CONFIG_FILE"
         log_info "Tensor split: $tensor_split"
-        log_info "Main GPU Vulkan ID: $main_gpu_vulkan_id"
+        log_info "Main GPU ROCm ID: $main_gpu_rocm_id"
     else
         echo
         log_info "DRY RUN - Configuration that would be saved:"
@@ -632,14 +856,14 @@ EOF
         echo
         log_info "Would save to: $CONFIG_FILE"
         log_info "Tensor split: $tensor_split"
-        log_info "Main GPU Vulkan ID: $main_gpu_vulkan_id"
+        log_info "Main GPU ROCm ID: $main_gpu_rocm_id"
     fi
 }
 
 # Main function
 main() {
     echo "GPU Auto-Detection and Configuration Script"
-    echo "for llama.cpp Model Controller (Vulkan Edition)"
+    echo "for llama.cpp Model Controller (ROCm Edition)"
     echo "==============================================="
     echo
     
@@ -652,7 +876,7 @@ main() {
     
     # Execute tasks
     check_llama_cli
-    detect_vulkan_devices
+    detect_rocm_devices
     map_pcie_slots
     prompt_user_selection
     generate_config
@@ -660,7 +884,8 @@ main() {
     echo
     if [[ "$DRY_RUN" != true ]]; then
         log_success "GPU auto-configuration completed successfully!"
-        log_info "You can now run the model controller with: python app.py"
+        log_info "Next, test your configuration: ./test_config.sh"
+        log_info "Then start the model controller: ./start.sh"
     else
         log_success "Dry-run completed. Use without --dry-run to apply changes."
     fi

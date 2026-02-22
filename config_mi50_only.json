@@ -1,0 +1,49 @@
+{
+  "gpu_configuration": {
+    "gpu_cards": [
+      {
+        "card_id": "card2",
+        "display_name": "AMD Radeon Graphics (MI50)",
+        "rocm_id": 1,
+        "sysfs_base": "/sys/class/drm/card2/device",
+        "hwmon_pattern": "hwmon/hwmon*"
+      }
+    ],
+    "sysfs_paths": {
+      "gpu_busy_percent": "gpu_busy_percent",
+      "temperature": "hwmon/hwmon*/temp1_input",
+      "power": "hwmon/hwmon*/power1_average",
+      "gpu_clock": "pp_dpm_sclk",
+      "mem_clock": "pp_dpm_mclk",
+      "fan_speed": "hwmon/hwmon*/fan1_input",
+      "vram_total": "mem_info_vram_total",
+      "vram_used": "mem_info_vram_used"
+    }
+  },
+  "model_configuration": {
+    "llama_cpp_path": "/home/cotg/llmstuff/llama.cpp/build-rocm/bin/llama-server",
+    "model_dir": "~/models",
+    "cache_dir": "~/.cache/llama",
+    "slots_dir": "/tmp/llama_slots"
+  },
+  "default_parameters": {
+    "port": "4000",
+    "host": "0.0.0.0",
+    "ngl": "99",
+    "ctx_size": "16384",
+    "batch_size": "512",
+    "ubatch_size": "128",
+    "main_gpu": "1",
+    "tensor_split": "",
+    "flash_attn": "on",
+    "parallel": "1",
+    "cont_batching": "true",
+    "split_mode": "1",
+    "extra_args": "--jinja --chat-template chatml"
+  },
+  "monitoring": {
+    "update_interval": 2,
+    "cache_ttl": 5,
+    "diagnosis_interval": 60
+  }
+}

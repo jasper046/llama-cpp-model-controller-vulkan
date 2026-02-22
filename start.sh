@@ -4,6 +4,26 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Check for configuration file
+if [ ! -f "config.json" ]; then
+    echo "Error: config.json not found."
+    echo "Please run: ./gpu_autodetect_and_config.sh"
+    echo "Then test with: ./test_config.sh"
+    exit 1
+fi
+
+# Set ROCm environment variables for MI50
+# For MI50 (gfx906): HSA_OVERRIDE_GFX_VERSION=9.0.6
+# HIP_VISIBLE_DEVICES=1 to use only MI50 (device 1)
+export HSA_OVERRIDE_GFX_VERSION=9.0.6
+export HIP_VISIBLE_DEVICES=1
+export ROCBLAS_USE_HIPBLASLT=1
+
+echo "ROCm environment variables set:"
+echo "  HSA_OVERRIDE_GFX_VERSION=$HSA_OVERRIDE_GFX_VERSION"
+echo "  HIP_VISIBLE_DEVICES=$HIP_VISIBLE_DEVICES"
+echo "  ROCBLAS_USE_HIPBLASLT=$ROCBLAS_USE_HIPBLASLT"
+
 VENV_DIR="venv"
 
 # Check if the virtual environment directory exists
