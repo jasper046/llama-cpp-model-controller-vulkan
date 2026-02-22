@@ -73,6 +73,17 @@ gpu_models_match() {
         [[ "$id1" == "$id2" ]] && return 0 || return 1
     fi
 
+    # Extract codenames (e.g., VEGA20, NAVI23) if present in parentheses
+    local codename1=$(echo "$model1" | grep -oP '\((RADV |VEGA|NAVI|GF|TU|AD)[0-9A-Z]+\)' | sed -E 's/^\((RADV |)//;s/\)$//')
+    local codename2=$(echo "$model2" | grep -oP '\((RADV |VEGA|NAVI|GF|TU|AD)[0-9A-Z]+\)' | sed -E 's/^\((RADV |)//;s/\)$//')
+
+    # If both have codenames, compare them
+    if [[ -n "$codename1" ]] && [[ -n "$codename2" ]]; then
+        if [[ "$codename1" == "$codename2" ]]; then
+            return 0
+        fi
+    fi
+
     # Fallback: check for partial match (one is substring of other)
     if [[ "$model1" == *"$model2"* ]] || [[ "$model2" == *"$model1"* ]]; then
         return 0
@@ -88,6 +99,10 @@ get_gpu_model_from_pci_id() {
     local device_id=$(echo "$vendor_device_id" | cut -d: -f2 | tr '[:lower:]' '[:upper:]')
 
     case "$device_id" in
+        # AMD Instinct
+        66A0) echo "AMD Radeon Instinct MI50 (VEGA20)" ;;
+        66A1) echo "AMD Radeon Instinct MI50 (VEGA20)" ;;
+
         # AMD Navi (RDNA 2)
         73DF) echo "AMD Radeon RX 7900 XTX" ;;
         73E4) echo "AMD Radeon RX 7900 XT" ;;
@@ -247,7 +262,7 @@ detect_vulkan_devices() {
         if [[ $line =~ ggml_vulkan:[[:space:]]+([0-9]+)[[:space:]]*=[[:space:]]*(.+)$ ]]; then
             local device_id="${BASH_REMATCH[1]}"
             local device_full_name="${BASH_REMATCH[2]}"
-            local device_name=$(echo "$device_full_name" | sed 's/ (.*$//')
+            local device_name=$(echo "$device_full_name" | cut -d'|' -f1 | sed 's/ *$//')
             
             if [[ $device_name =~ (AMD|Radeon|NVIDIA|GeForce|Intel|Arc) ]]; then
                 log_verbose "Found GPU device: ID=$device_id, Name=$device_name"
@@ -359,19 +374,9 @@ map_pcie_slots() {
         done
 
         if [[ "$matched" == false ]]; then
-            log_warn "Could not match $card_id ($card_gpu_model) to any Vulkan device, using fallback"
-            # Fallback: use next available Vulkan ID
-            local vulkan_index=${#gpu_config[@]}
-            if [[ $vulkan_index -lt ${#GPUS[@]} ]]; then
-                local fallback_gpu_info="${GPUS[$vulkan_index]}"
-                local fallback_vulkan_id=$(echo "$fallback_gpu_info" | cut -d: -f1)
-                local fallback_vulkan_name=$(echo "$fallback_gpu_info" | cut -d: -f2-)
-                gpu_config+=("$card_id:$pcie_slot:$fallback_vulkan_id:$fallback_vulkan_name")
-                log_verbose "Fallback: $card_id → Vulkan ID $fallback_vulkan_id ($fallback_vulkan_name)"
-            else
-                log_error "No more Vulkan devices available for $card_id"
-                exit 1
-            fi
+            log_error "Could not match $card_id ($card_gpu_model) to any Vulkan device."
+            log_error "This usually indicates a problem with Vulkan drivers reporting incorrect GPU names."
+            exit 1
         fi
     done
 
